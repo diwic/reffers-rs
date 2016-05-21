@@ -2,5 +2,8 @@
 name = "reffers"
 version = "0.1.0"
 authors = ["David Henningsson <diwic@ubuntu.com>"]
+license = "Apache-2.0/MIT"
+description = "Tiny wrappers around references, Boxes or Arcs."
+keywords = ["ref", "box", "arc", "pointer"]
 
 [dependencies]

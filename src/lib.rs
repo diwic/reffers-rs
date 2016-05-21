@@ -1,5 +1,7 @@
 //! Wrappers around references, boxes or Arcs.
 
+#![cfg_attr(feature = "nightly", feature(filling_drop, unsafe_no_drop_flag))]
+
 use std::sync::Arc;
 use std::marker::PhantomData;
 use std::mem::{transmute, forget, size_of, align_of};
@@ -7,17 +9,67 @@ use std::ops::{Deref, DerefMut};
 use std::sync::atomic::AtomicUsize;
 use std::fmt;
 
-/// RMBA can store an &T, a &mut T, a Box<T> or an Arc<T>, within just a pointer -
-/// this will panic if you try to store something that's not 32 bit aligned.
-pub struct RMBA<'a, T: 'a>(usize, PhantomData<Option<&'a T>>, PhantomData<Option<&'a mut T>>,
-    PhantomData<Option<Box<T>>>, PhantomData<Option<Arc<T>>>);
+/// Slightly bigger and slower than RMBA, but same functionality.
+/// Mostly used just to verify correctness of the real RMBA.
+#[derive(Debug)]
+pub enum SlowRMBA<'a, T: 'a> {
+    Ref(&'a T),
+    RefMut(&'a mut T),
+    Box(Box<T>),
+    Arc(Arc<T>),
+}
+
+impl<'a, T: 'a> SlowRMBA<'a, T> {
+    /// Will return a clone if it contains a Arc<T> or &T, or None if it is a Box<T> or &mut T 
+    pub fn try_clone(&self) -> Option<SlowRMBA<'a, T>> {
+        match self {
+            &SlowRMBA::Ref(ref t) => Some(SlowRMBA::Ref(t)),
+            &SlowRMBA::Arc(ref t) => Some(SlowRMBA::Arc(t.clone())),
+            _ => None,
+        }
+    }
+
+    /// Will return a &mut to inner contents if it contains a &mut T, a Box<T> or if the Arc<T> is unique. Otherwise returns None.
+    pub fn get_mut(&mut self) -> Option<&mut T> {
+        match self {
+            &mut SlowRMBA::RefMut(ref mut t) => Some(t),
+            &mut SlowRMBA::Box(ref mut t) => Some(t),
+            &mut SlowRMBA::Arc(ref mut t) => Arc::get_mut(t),
+            _ => None,
+        }
+    }
+}
+
+
+impl<'a, T: 'a> Deref for SlowRMBA<'a, T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        match self {
+            &SlowRMBA::Ref(ref t) => t,
+            &SlowRMBA::RefMut(ref t) => t,
+            &SlowRMBA::Box(ref t) => t,
+            &SlowRMBA::Arc(ref t) => t,
+        }
+    }
+}
+
+
+/// RMBA can store an &T, a &mut T, a Box<T> or an Arc<T>.
+/// It will panic if you try to store something that's not 32 bit aligned.
+///
+/// As of Rust 1.10, the RMBA is just the size of a single pointer only if
+/// the "nightly" feature is enabled. (Otherwise Rust will add a drop flag,
+/// which doubles the size of the RMBA. Argh.)
+#[cfg_attr(feature = "nightly", unsafe_no_drop_flag)]
+pub struct RMBA<'a, T: 'a>(usize, PhantomData<SlowRMBA<'a, T>>);
 
 impl<'a, T: 'a> RMBA<'a, T> {
     fn make(p: *const T, add: usize) -> RMBA<'a, T> {
         let z: usize = unsafe { transmute(p) };
         assert!(align_of::<T>() >= 4);
         debug_assert!(z & 3 == 0);
-        RMBA(z+add, PhantomData, PhantomData, PhantomData, PhantomData)
+        RMBA(z+add, PhantomData)
     }
     
     pub fn new<A: Into<RMBA<'a, T>>>(t: A) -> RMBA<'a, T> { t.into() }
@@ -27,7 +79,7 @@ impl<'a, T: 'a> RMBA<'a, T> {
     /// Will return a clone if it contains a Arc<T> or &T, or None if it is a Box<T> or &mut T 
     pub fn try_clone(&self) -> Option<RMBA<'a, T>> {
         match self.0 & 3 {
-            0 => Some(RMBA(self.0, self.1, self.2, self.3, self.4)),
+            0 => Some(RMBA(self.0, PhantomData)),
             2 => unsafe {
                 let t: Arc<T> = transmute(self.0 - 2 - 2*size_of::<AtomicUsize>());
                 let t2 = t.clone();
@@ -92,8 +144,15 @@ impl<'a, T: 'a> Deref for RMBA<'a, T> {
     fn deref(&self) -> &T { unsafe { transmute(self.0 & (!3)) }}
 }
 
+#[cfg(not(feature = "nightly"))]
+const DROP_FILL: usize = 0;
+
+#[cfg(feature = "nightly")]
+const DROP_FILL: usize = std::mem::POST_DROP_USIZE;
+
 impl<'a, T: 'a> Drop for RMBA<'a, T> {
     fn drop(&mut self) {
+        if self.0 == DROP_FILL { return; }
         match self.0 & 3 {
             0|3 => {},
             1 => unsafe { Box::<T>::from_raw(transmute(self.0-1)); },
@@ -148,6 +207,12 @@ fn rmba_typical() {
     assert_eq!(&*d.a, &5i32);
 }
 
+#[cfg(feature = "nightly")]
+#[test]
+fn sizes() {
+    assert_eq!(size_of::<&i32>(), size_of::<RMBA<i32>>());
+    assert!(size_of::<RMBA<i32>>() < size_of::<SlowRMBA<i32>>());
+}
 
 /// A simple wrapper around Box to avoid DerefMove. There is no way to get to
 /// &Box<T>, just &T and &mut T. This way you can return a Bx<T> in your API and still be

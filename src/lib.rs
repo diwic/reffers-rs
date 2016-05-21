@@ -1,8 +1,9 @@
+//! Wrappers around references, boxes or Arcs.
 
 use std::sync::Arc;
 use std::marker::PhantomData;
 use std::mem::{transmute, forget, size_of, align_of};
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::AtomicUsize;
 use std::fmt;
 
@@ -95,4 +96,30 @@ fn rba_typical() {
     let d = Dummy { a: z.clone(), b: RBA::new(z) };
     assert_eq!(&*d.b, &5i32);
     assert_eq!(&*d.a, &5i32);
+}
+
+
+/// A simple wrapper around Box to avoid DerefMove. There is no way to get to
+/// &Box<T>, just &T. This way you can return a Bx<T> in your API and still be
+/// sure the inner struct does not move in memory.
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct Bx<T>(Box<T>);
+
+impl<T> Bx<T> {
+    pub fn new(t: T) -> Bx<T> { Bx(Box::new(t)) }
+}
+
+impl<T> From<Box<T>> for Bx<T> {
+    fn from(t: Box<T>) -> Bx<T> { Bx(t) }
+}
+
+impl<T> Deref for Bx<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T { &self.0 }
+}
+
+impl<T> DerefMut for Bx<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T { &mut self.0 }
 }

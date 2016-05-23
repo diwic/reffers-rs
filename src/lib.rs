@@ -1,4 +1,22 @@
 //! Wrappers around references, boxes or Arcs.
+//!
+//! BBx and FBx go together to create a struct which can reference itself. Like this:
+//!
+//!```rust
+//!#[macro_use] extern crate reffers;
+//!
+//!struct Foo<'a> { a: String, b: &'a str }
+//!impl_bbx!(Foo, FooBuilder, a => String, b => &str);
+//!
+//!fn main() { 
+//!    let mut z = FooBuilder::new();
+//!    z.a(|| "Hello world".into()); // Allocate string, put in a
+//!    z.b(|a| &a[6..]); // Calculate b from a
+//!    let f = z.build(); // Make a FBx<Foo> that Derefs to Foo
+//!    assert_eq!(&f.a, "Hello world");
+//!    assert_eq!(f.b, "world"); // Correctly points into Foo.a
+//!}
+//!```
 
 #![cfg_attr(feature = "nightly", feature(filling_drop, unsafe_no_drop_flag))]
 
@@ -8,6 +26,11 @@ use std::mem::{transmute, forget, size_of, align_of};
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::AtomicUsize;
 use std::fmt;
+
+mod staged_init;
+
+pub use staged_init::{StructInfo, BBx, FBx};
+
 
 /// Slightly bigger and slower than RMBA, but same functionality.
 /// Mostly used just to verify correctness of the real RMBA.
@@ -238,3 +261,7 @@ impl<T> DerefMut for Bx<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T { &mut self.0 }
 }
+
+
+
+

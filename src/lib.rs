@@ -1,24 +1,8 @@
 //! Wrappers around references, boxes or Arcs.
 //!
-//! BBx and FBx go together to create a struct which can reference itself. Like this:
-//!
-//!```rust
-//!#[macro_use] extern crate reffers;
-//!
-//!struct Foo<'a> { a: String, b: &'a str }
-//!impl_bbx!(Foo, FooBuilder, a => String, b => &str);
-//!
-//!fn main() { 
-//!    let mut z = FooBuilder::new();
-//!    z.a(|| "Hello world".into()); // Allocate string, put in a
-//!    z.b(|a| &a[6..]); // Calculate b from a
-//!    let f = z.build(); // Make a FBx<Foo> that Derefs to Foo
-//!    assert_eq!(&f.a, "Hello world");
-//!    assert_eq!(f.b, "world"); // Correctly points into Foo.a
-//!}
-//!```
-
-#![cfg_attr(feature = "nightly", feature(filling_drop, unsafe_no_drop_flag))]
+//! Features: 
+//! * Bx and Bxm: Boxes without DerefMove.
+//! * RMBA: Wrap a &T, &mut T, Box<T> or Arc<T> within the size of a single pointer. 
 
 use std::sync::Arc;
 use std::marker::PhantomData;
@@ -26,11 +10,6 @@ use std::mem::{transmute, forget, size_of, align_of};
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::AtomicUsize;
 use std::fmt;
-
-mod staged_init;
-
-pub use staged_init::{StructInfo, BBx, FBx};
-
 
 /// Slightly bigger and slower than RMBA, but same functionality.
 /// Mostly used just to verify correctness of the real RMBA.
@@ -81,10 +60,8 @@ impl<'a, T: 'a> Deref for SlowRMBA<'a, T> {
 /// RMBA can store an &T, a &mut T, a Box<T> or an Arc<T>.
 /// It will panic if you try to store something that's not 32 bit aligned.
 ///
-/// As of Rust 1.10, the RMBA is just the size of a single pointer only if
-/// the "nightly" feature is enabled. (Otherwise Rust will add a drop flag,
-/// which doubles the size of the RMBA. Argh.)
-#[cfg_attr(feature = "nightly", unsafe_no_drop_flag)]
+/// Note: Drop flags were removed in 1.13-nightly. If you run an earlier version,
+/// size might be larger than a single pointer due to the drop flag.
 pub struct RMBA<'a, T: 'a>(usize, PhantomData<SlowRMBA<'a, T>>);
 
 impl<'a, T: 'a> RMBA<'a, T> {
@@ -167,15 +144,8 @@ impl<'a, T: 'a> Deref for RMBA<'a, T> {
     fn deref(&self) -> &T { unsafe { transmute(self.0 & (!3)) }}
 }
 
-#[cfg(not(feature = "nightly"))]
-const DROP_FILL: usize = 0;
-
-#[cfg(feature = "nightly")]
-const DROP_FILL: usize = std::mem::POST_DROP_USIZE;
-
 impl<'a, T: 'a> Drop for RMBA<'a, T> {
     fn drop(&mut self) {
-        if self.0 == DROP_FILL { return; }
         match self.0 & 3 {
             0|3 => {},
             1 => unsafe { Box::<T>::from_raw(transmute(self.0-1)); },
@@ -230,15 +200,14 @@ fn rmba_typical() {
     assert_eq!(&*d.a, &5i32);
 }
 
-#[cfg(feature = "nightly")]
 #[test]
-fn sizes() {
+fn rmba_sizes() {
     assert_eq!(size_of::<&i32>(), size_of::<RMBA<i32>>());
     assert!(size_of::<RMBA<i32>>() < size_of::<SlowRMBA<i32>>());
 }
 
 /// A simple wrapper around Box to avoid DerefMove. There is no way to get to
-/// &Box<T>, just &T and &mut T. This way you can return a Bx<T> in your API and still be
+/// &Box<T>, just &T. This way you can return a Bx<T> in your API and still be
 /// sure the inner struct does not move in memory.
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Bx<T>(Box<T>);
@@ -257,11 +226,32 @@ impl<T> Deref for Bx<T> {
     fn deref(&self) -> &T { &self.0 }
 }
 
-impl<T> DerefMut for Bx<T> {
+/// A simple wrapper around Box to avoid DerefMove. Like Bx,
+/// but also allows mutable access to the interior of the box.
+///
+/// Note that this will allow callers to use e g `mem::swap` and
+/// `mem::replace` to move the box's contents to other memory
+/// locations.
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct Bxm<T>(Box<T>);
+
+impl<T> Bxm<T> {
+    pub fn new(t: T) -> Bxm<T> { Bxm(Box::new(t)) }
+}
+
+impl<T> From<Box<T>> for Bxm<T> {
+    fn from(t: Box<T>) -> Bxm<T> { Bxm(t) }
+}
+
+impl<T> Deref for Bxm<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T { &self.0 }
+}
+
+impl<T> DerefMut for Bxm<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T { &mut self.0 }
 }
-
-
 
 

@@ -1,3 +1,8 @@
+/*
+ Note: This never worked correctly. Instead see https://github.com/diwic/refstruct-rs for a
+more robust alternative. 
+*/
+
 
 use std::marker::PhantomData;
 use std::{mem, ops, ptr};
@@ -119,6 +124,43 @@ impl<T: StructInfo> Drop for BBx<T> {
     fn drop(&mut self) { self.truncate(0) }
 }
 
+
+#[macro_export]
+/// Internal use only. Use the impl_bbx macro instead
+macro_rules! bbx_helper_main {
+    ($t: ident, $twrap: ident, $c: expr, $f: ident, $nr: ident, $drops: expr) => {
+
+unsafe impl<'a> $crate::StructInfo for $t<'a> {
+    fn count() -> usize { $c }
+    fn drop_nr($f: &mut $crate::BBx<Self>, $nr: usize) {
+        unsafe { $drops }
+    }
+}
+
+struct $twrap<'a>($crate::BBx<$t<'a>>);
+
+impl<'a> $twrap<'a> {
+    pub fn new() -> Self { $twrap($crate::BBx::new()) }
+    pub fn build(self) -> $crate::FBx<$t<'a>> { self.0.build() }
+}
+
+    }
+}
+
+#[macro_export]
+/// Internal use only. Use the impl_bbx macro instead
+macro_rules! bbx_helper_append {
+
+    ($i: ident, $tr: ty, $c: expr, $aw: ident, $( $ta: ty,)* ) => {
+
+    pub fn $i<F: for <'q> FnOnce($(&'q $ta,)*) -> &'q $tr>(&mut self, f: F) {
+        assert_eq!(self.0.get_count(), $c);
+        unsafe { (self.0).$aw(f); }
+    }
+
+    }
+}
+
 #[macro_export]
 /// Implements StructInfo for a particular struct.
 ///
@@ -129,6 +171,39 @@ impl<T: StructInfo> Drop for BBx<T> {
 macro_rules! impl_bbx {
 
     ($t: ident, $twrap: ident, $i0: ident => $t0: ty, $i1: ident => $t1: ty) => {
+
+        bbx_helper_main!($t, $twrap, 2, f, nr, match nr {
+            0 => f.drop_one::<$t0>(),
+            1 => f.drop_one::<$t1>(),
+            _ => unreachable!(),
+        });
+
+        impl<'a> $twrap<'a> {
+            bbx_helper_append!($i0, $t0, 0, append,);
+            bbx_helper_append!($i1, $t1, 1, append_with0, $t0,);
+        }
+    };
+
+    ($t: ident, $twrap: ident, $i0: ident => $t0: ty, $i1: ident => $t1: ty, $i2: ident => $t2: ty) => {
+
+        bbx_helper_main!($t, $twrap, 3, f, nr, match nr {
+            0 => f.drop_one::<$t0>(),
+            1 => f.drop_one::<$t1>(),
+            2 => f.drop_one::<$t2>(),
+            _ => unreachable!(),
+        });
+
+        impl<'a> $twrap<'a> {
+            bbx_helper_append!($i0, $t0, 0, append,);
+            bbx_helper_append!($i1, $t1, 1, append_with0, $t0,);
+            bbx_helper_append!($i2, $t2, 2, append_with1, $t0, $t1,);
+        }
+    }
+
+
+}
+
+/*
 
 unsafe impl<'a> $crate::StructInfo for $t<'a> {
     fn count() -> usize { 2 }
@@ -154,15 +229,18 @@ impl<'a> $twrap<'a> {
         assert_eq!(self.0.get_count(), 1);
         unsafe { self.0.append_with0(f); }
     }
-}
 
-    }
-}
+*/
+
 
 #[cfg(test)]
 mod tests {
     struct Simple<'a> { a: String, b: &'a str }
     impl_bbx!(Simple, BSimple, a => String, b => &str);
+
+    struct Simple2<'a> { a: String, b: &'a str, c: &'a str }
+    impl_bbx!(Simple2, BSimple2, a => String, b => &str, c => &str);
+
 
 /*
     struct BSimple<'a>(BBx<Simple<'a>>);

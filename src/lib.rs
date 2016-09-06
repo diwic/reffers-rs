@@ -10,6 +10,10 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::{fmt, mem};
 
+pub mod aref;
+
+pub use aref::ARef as ARef;
+
 /// Slightly bigger and slower than RMBA, but same functionality.
 /// Mostly used just to verify correctness of the real RMBA.
 #[derive(Debug)]

@@ -55,12 +55,30 @@ impl<'a, T: 'a + ?Sized> Deref for SlowRMBA<'a, T> {
 ///
 /// Note: Drop flags were removed in 1.13-nightly. If you run an earlier version,
 /// size might be larger than a single pointer due to the drop flag.
-pub struct RMBA<'a, T: 'a + ?Sized>(*const T, PhantomData<SlowRMBA<'a, T>>);
+/// 
+/// # Example
+/// ```
+/// use reffers::RMBA;
+/// use std::{iter, sync};
+///
+/// // Uses Box if only one clone is needed, otherwise uses Arc.
+/// fn make_a_few<'a, T>(t: T, count: usize) -> Vec<RMBA<'a, T>> {
+///     match count {
+///         0 => vec![],
+///         1 => vec![RMBA::new_box(t)],
+///         _ => iter::repeat(sync::Arc::new(t))
+///             .take(count).map(|a| RMBA::from(a)).collect()
+///     }
+/// }
+/// ```
 
+pub struct RMBA<'a, T: 'a + ?Sized>(*const T, PhantomData<SlowRMBA<'a, T>>);
 
 impl<'a, T: 'a> RMBA<'a, T> {
     pub fn new_box(t: T) -> RMBA<'a, T> { Box::new(t).into() }
 }
+
+unsafe impl<'a, T: 'a + ?Sized + Send> Send for RMBA<'a, T> {}
 
 impl<'a, T: 'a + ?Sized> RMBA<'a, T> {
 

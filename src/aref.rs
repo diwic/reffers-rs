@@ -1,6 +1,6 @@
 
 use super::{RMBA, Bx, Bxm};
-use std::{ptr, mem};
+use std::{ptr, mem, fmt};
 use std::ops::Deref;
 use std::rc::Rc;
 use std::sync::{Arc, MutexGuard, RwLockReadGuard, RwLockWriteGuard};
@@ -106,6 +106,11 @@ unsafe fn aref_drop_wrapper<T>(t: *mut ARefStorage) {
     ptr::drop_in_place::<T>(t as *mut _ as *mut T);
 }
 
+impl<'a, U: fmt::Debug + ?Sized> fmt::Debug for ARef<'a, U> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("ARef").field(&(&self as &U)).finish()
+    }
+}
 
 impl<'a, U: ?Sized> Drop for ARef<'a, U> {
     fn drop(&mut self) {
@@ -192,6 +197,12 @@ impl<'a, O: 'a + AReffic + Deref<Target = U>, U: ?Sized> From<O> for ARef<'a, U>
     }
 }
 
+#[test]
+fn debug_impl() {
+    let f = 5u8;
+    let z: ARef<u8> = (&f).into();
+    assert_eq!(&*format!("{:?}", z), "ARef(5)");
+}
 
 #[test]
 fn verify_drop() {

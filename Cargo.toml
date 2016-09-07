@@ -3,11 +3,9 @@ name = "reffers"
 version = "0.1.0"
 authors = ["David Henningsson <diwic@ubuntu.com>"]
 license = "Apache-2.0/MIT"
-description = "Tiny wrappers around references, Boxes or Arcs."
-keywords = ["ref", "box", "arc", "pointer"]
-
-[features]
-# Enables the RMBA to be pointer sized.
-nightly = []
+description = "Smart pointer wrappers around references, Boxes and Arcs."
+keywords = ["ref", "box", "arc", "pointer", "RMBA", "OwningRef", "ARef"]
+repository = "https://github.com/diwic/reffers-rs"
+documentation = "http://docs.rs/reffers"
 
 [dependencies]

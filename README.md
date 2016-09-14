@@ -1,6 +1,6 @@
 Assorted smart pointers for Rust. 
 
-[![API Docs](https://docs.rs/reffers-rs/badge.svg)](https://docs.rs/reffers)
+[![API Docs](https://docs.rs/reffers/badge.svg)](https://docs.rs/reffers)
 
 [![Crates.io](http://meritbadge.herokuapp.com/reffers)](https://crates.io/crates/reffers)
 

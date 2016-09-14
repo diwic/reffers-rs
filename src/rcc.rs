@@ -134,6 +134,8 @@ impl<T> RCell<T> {
 
     #[inline]
     fn get_state(&self) -> State { State::from(self.get_mask() & STATE_MASK) }
+
+    #[inline]
     fn set_state(&self, s: State) { 
         let mm = (self.get_mask() & !STATE_MASK) + (s as u32);
         self.set_mask(mm);
@@ -141,27 +143,37 @@ impl<T> RCell<T> {
 
     #[inline]
     fn get_strong(&self) -> u32 { (self.get_mask() & STRONG_MASK) >> 2 }
+
+    #[inline]
     fn set_strong(&self, m: u32) {
-        if m > 0x7fff { panic!("Strong Rcc count overflow") }
         let mm = (self.get_mask() & !STRONG_MASK) + (m << 2);
         self.set_mask(mm);
     }
 
     #[inline]
     fn get_weak(&self) -> u32 { (self.get_mask() & WEAK_MASK) >> 17 }
+
+    #[inline]
     fn set_weak(&self, m: u32) {
         if m > 0x7fff { panic!("Weak Rcc count overflow") }
         let mm = (self.get_mask() & !WEAK_MASK) + (m << 17);
         self.set_mask(mm);
     }
 
+    #[inline]
     fn check_drop(&self) {
         if self.get_strong() != 0 || self.get_state() == State::Borrowed { return; }
+        self.do_drop();
+    }
+
+    fn do_drop(&self) {
         if self.get_state() != State::Dropped {
+            self.set_strong(1); // Prevent double free in case drop_in_place does weird things
             self.set_state(State::Dropped);
             unsafe { ptr::drop_in_place(self.inner()) };
             debug_assert_eq!(self.get_state(), State::Dropped);
-            debug_assert_eq!(self.get_strong(), 0);
+            debug_assert_eq!(self.get_strong(), 1);
+            self.set_strong(0);
         }
         if self.get_weak() != 0 { return };
         debug_assert_eq!(self.0.get() as *const _ as *const (), self as *const _ as *const ()); 
@@ -178,6 +190,21 @@ impl<T> RCell<T> {
             },
             m @ _ => Err(m)
         }
+    }
+
+    fn clone_strong<'a>(&'a self) -> Result<Rcc<'a, T>, State> {
+        if self.get_state() == State::Dropped { return Err(State::Dropped) }
+        let m = self.get_strong() + 1;
+        if m > 0x7fff { panic!("Strong Rcc count overflow") }
+        self.set_strong(m);
+        Ok(Rcc(self, PhantomData))
+    }
+
+    fn clone_weak<'a>(&'a self) -> WRcc<'a, T> {
+        let m = self.get_weak() + 1;
+        if m > 0x7fff { panic!("Weak Rcc count overflow") }
+        self.set_weak(m);
+        WRcc(self, PhantomData)
     }
 }
 
@@ -270,14 +297,12 @@ impl<'b, T: 'b> Rcc<'b, T> {
         else { Err(m) }
     }
 
-    pub fn clone_weak(&self) -> WRcc<'b, T> {
-        self.0.set_weak(self.0.get_weak() + 1);
-        WRcc(self.0, PhantomData)
-    }
+    #[inline]
+    pub fn clone_weak(&self) -> WRcc<'b, T> { self.0.clone_weak() }
 }
 
 impl<'b, T: 'b> Clone for Rcc<'b, T> {
-    fn clone(&self) -> Self { self.0.set_strong(self.0.get_strong() + 1); Rcc(self.0, PhantomData) }
+    fn clone(&self) -> Self { self.0.clone_strong().unwrap() }
 }
 
 impl<'b, T: 'b> Drop for Rcc<'b, T> {
@@ -312,15 +337,12 @@ impl<'b, T: 'b> WRcc<'b, T> {
     /// Creates a new strong reference from a weak one.
     ///
     /// Will return an error in case the inner value has already been dropped.
-    pub fn clone_strong(&self) -> Result<Rcc<'b, T>, State> {
-        if self.0.get_state() == State::Dropped { return Err(State::Dropped) }
-        self.0.set_strong(self.0.get_strong() + 1);
-        Ok(Rcc(self.0, PhantomData))
-    }
+    #[inline]
+    pub fn clone_strong(&self) -> Result<Rcc<'b, T>, State> { self.0.clone_strong() }
 }
 
 impl<'b, T: 'b> Clone for WRcc<'b, T> {
-    fn clone(&self) -> Self { self.0.set_weak(self.0.get_weak() + 1); WRcc(self.0, PhantomData) }
+    fn clone(&self) -> Self { self.0.clone_weak() }
 }
 
 impl<'b, T: 'b> Drop for WRcc<'b, T> {

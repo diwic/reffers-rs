@@ -3,9 +3,10 @@ name = "reffers"
 version = "0.1.0"
 authors = ["David Henningsson <diwic@ubuntu.com>"]
 license = "Apache-2.0/MIT"
-description = "Smart pointer wrappers around references, Boxes and Arcs."
-keywords = ["ref", "box", "arc", "pointer", "RMBA", "OwningRef", "ARef"]
+description = "Assorted smart pointers: wrappers around references, boxes and Arcs."
+keywords = ["ref", "box", "arc", "pointer", "RMBA", "OwningRef", "reference", "ARef", "Rc", "Rcc"]
 repository = "https://github.com/diwic/reffers-rs"
 documentation = "http://docs.rs/reffers"
+readme = "https://github.com/diwic/reffers-rs/README.md"
 
 [dependencies]

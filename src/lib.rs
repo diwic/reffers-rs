@@ -2,6 +2,8 @@
 //!
 //! Features: 
 //!
+//! * Rcc: An Rc<RefCell<T>> in just 4 extra bytes of storage.
+//!
 //! * ARef: OwningRef with even further erasure of the owner.
 //!
 //! * RMBA: Wrap a &T, &mut T, Box<T> or Arc<T> within the size of a single pointer. 
@@ -12,6 +14,7 @@ use std::ops::{Deref, DerefMut};
 
 pub mod aref;
 pub mod rmba;
+pub mod rcc;
 
 pub use aref::ARef as ARef;
 pub use rmba::RMBA as RMBA;

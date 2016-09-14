@@ -2,11 +2,12 @@
 //!
 //! Features: 
 //!
-//! * Rcc: An Rc<RefCell<T>> in just 4 extra bytes of storage.
+//! * Rcc: An `Rc<RefCell<T>>` in just 4 extra bytes of storage, poisoning support,
+//! and no immutable references.
 //!
-//! * ARef: OwningRef with even further erasure of the owner.
+//! * ARef: `OwningRef` with even further erasure of the owner.
 //!
-//! * RMBA: Wrap a &T, &mut T, Box<T> or Arc<T> within the size of a single pointer. 
+//! * RMBA: Wrap a `&T`, `&mut T`, `Box<T>` or `Arc<T>` within the size of a single pointer. 
 //!
 //! * Bx and Bxm: Boxes without DerefMove.
 
@@ -18,6 +19,7 @@ pub mod rcc;
 
 pub use aref::ARef as ARef;
 pub use rmba::RMBA as RMBA;
+pub use rcc::Rcc as Rcc;
 
 /// A simple wrapper around Box to avoid DerefMove.
 ///

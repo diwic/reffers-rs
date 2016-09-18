@@ -1,6 +1,5 @@
 
 use super::{RMBA, Bx, Bxm};
-use super::rcc::RccRef;
 use std::{ptr, mem, fmt};
 use std::ops::Deref;
 use std::rc::Rc;
@@ -43,7 +42,6 @@ unsafe impl<T: ?Sized> AReffic for Box<T> {}
 unsafe impl<T: ?Sized> AReffic for Rc<T> {}
 unsafe impl<T: ?Sized> AReffic for Arc<T> {}
 unsafe impl<'a, T: ?Sized> AReffic for RMBA<'a, T> {}
-unsafe impl<'a, T> AReffic for RccRef<'a, T> {}
 unsafe impl<T: ?Sized> AReffic for Bx<T> {}
 unsafe impl<T: ?Sized> AReffic for Bxm<T> {}
 unsafe impl<T> AReffic for Vec<T> {}
@@ -218,7 +216,7 @@ fn verify_drop() {
 
 #[test]
 fn verify_types() {
-    use super::Rcc;
+//    use super::Rcc;
     use std::cell::RefCell;
     use std::sync::{Mutex, RwLock};
     verify_areffic(Box::new(5u8)).unwrap();
@@ -238,8 +236,8 @@ fn verify_types() {
     assert_eq!(*verify_areffic(r.read().unwrap()).unwrap(), 5u8);
     let m = Mutex::new(5u8);
     assert_eq!(*verify_areffic(m.lock().unwrap()).unwrap(), 5u8);
-    let r = Rcc::new(5u8);
-    verify_areffic(r.get()).unwrap();
+//    let r = Rcc::new(5u8);
+//    verify_areffic(r.get()).unwrap();
 }
 
 /*

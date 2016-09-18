@@ -15,11 +15,11 @@ use std::ops::{Deref, DerefMut};
 
 pub mod aref;
 pub mod rmba;
-pub mod rcc;
+pub mod rc;
 
 pub use aref::ARef as ARef;
 pub use rmba::RMBA as RMBA;
-pub use rcc::Rcc as Rcc;
+
 
 /// A simple wrapper around Box to avoid DerefMove.
 ///

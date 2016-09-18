@@ -1,6 +1,6 @@
 //! An alternative to `Rc<RefCell<T>>`, with less memory overhead and poisoning support.
 //!
-//! * Configurable overhead (compared to a fixed 12 or 24 for `Rc<RefCell<T>>`)
+//! * Configurable overhead (compared to a fixed 24 or 12 for `Rc<RefCell<T>>`)
 //!
 //! * The default of 4 bytes gives you max 64 immutable references, 4096 strong references
 //! and 4096 weak references, but this can easily be tweaked with just a few lines of code.
@@ -13,6 +13,25 @@
 //!
 //! * Last but not least, just writing `.get()` is less characters than `.upgrade().unwrap().borrow()`
 //! that you would do with a `Weak<RefCell<T>>`.
+//!
+//! # Four structs
+//!
+//! * `Strong` - A strong reference to the inner value, keeping it from being dropped.
+//!   To access the inner value, use `.get()` or `.get_mut()` to create `Ref` and `RefMut` structs.
+//!
+//! * `Ref` - A strong reference to the inner value, with immutable access to the inner value.
+//!
+//! * `RefMut` - A strong reference to the inner value, with mutable access to the inner value.
+//!   There can only be one RefMut reference; and when Ref references exist, there can be no RefMut references.
+//!
+//! * `Weak` - A weak reference, the inner value will be dropped when no other types of references exist.
+//!   This can be helpful w r t breaking up cycles of Strong references.
+//!   There is no need to "upgrade" a weak reference to a strong reference just to access the inner value -
+//!   just call `.get()` or `.get_mut()` on the weak reference directly.
+//!
+//! Where applicable, there are `.get_strong()` and `.get_weak()` functions that create new Strong and
+//! Weak references. There are also `.try_get()`, `.try_get_mut()` etc functions that return an error instead
+//! of panicking in case the reference is in an incorrect state. 
 //!
 //! # Example
 //! ```
@@ -69,6 +88,29 @@ const OVERFLOW_STR: [&'static str; 3] =
 ///
 /// Declaring these functions with #[inline] is recommended for performance.
 /// You only need to implement bits (the actual config), get and set functions. 
+///
+/// # Example
+/// ```
+/// use reffers::rc::BitMask;
+///
+/// #[derive(Debug, Copy, Clone, Default)]
+/// struct ManyWeak(u32);
+///
+/// unsafe impl BitMask for ManyWeak {
+///     // We want 4 Refs, only one Strong, and as many Weaks as possible
+///     // for the 32 bits of overhead that we are willing to accept.
+///     // In total, this must add up to 30 bits (32 bits, save 2 for status).
+///     #[inline]
+///     fn bits() -> [u8; 3] { [2, 1, 27] }
+///
+///     // The rest is just glue code.
+///     #[inline]
+///     fn set(&mut self, u: u64) { self.0 = u as u32 }
+///
+///     #[inline]
+///     fn get(&self) -> u64 { self.0 as u64 }
+/// }
+/// ```
 pub unsafe trait BitMask: Copy + Default {
     /// Returns a triple of bits reserved for Ref, Strong and Weak -
     /// in that order. The first two (least significant) bits are reserved for state.
@@ -264,7 +306,79 @@ impl<T: ?Sized, M: BitMask> RCell<T, M> {
         m2.set(m);
         self.mask.set(m2);
     }
+
+    pub fn try_get<'a>(&'a self) -> Result<RCellRef<'a, T, M>, State> {
+        let s = self.state();
+        if s != State::Available && s != State::Borrowed { return Err(s); }
+
+        let mut m = self.mask.get();
+        m.inc(BM_REF).unwrap();
+        self.mask.set(m);
+
+        Ok(RCellRef(self))
+    }
+
+    pub fn try_get_mut<'a>(&'a self) -> Result<RCellRefMut<'a, T, M>, State> {
+        let s = self.state();
+        if s != State::Available { return Err(s); }
+        self.set_state(State::BorrowedMut);
+        Ok(RCellRefMut(self))
+    }
+
+    pub fn unpoison(&self) -> Result<(), State> {
+        let s = self.state();
+        if s != State::Poisoned { return Err(s); }
+        self.set_state(State::Available);
+        Ok(())
+    }
 }
+
+
+/// Immutable borrow of an RCell.
+pub struct RCellRef<'a, T: 'a + ?Sized, M: 'a + BitMask>(&'a RCell<T, M>);
+
+impl<'a, T: 'a + ?Sized, M: 'a + BitMask> Drop for RCellRef<'a, T, M> {
+    fn drop(&mut self) {
+        debug_assert_eq!(self.0.state(), State::Borrowed);
+
+        let mut m = self.0.mask.get();
+        m.dec(BM_REF);
+        self.0.mask.set(m);
+    }
+}
+
+impl<'a, T: 'a + ?Sized, M: 'a + BitMask> ops::Deref for RCellRef<'a, T, M> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target { unsafe { &*self.0.inner.get() }}
+}
+
+
+/// Mutable borrow of an RCell.
+pub struct RCellRefMut<'a, T: 'a + ?Sized, M: 'a + BitMask>(&'a RCell<T, M>);
+
+impl<'a, T: 'a + ?Sized, M: 'a + BitMask> Drop for RCellRefMut<'a, T, M> {
+    fn drop(&mut self) {
+        use std::thread;
+        debug_assert_eq!(self.0.state(), State::BorrowedMut);
+        let s = if thread::panicking() { State::Poisoned } else { State::Available };
+        self.0.set_state(s);
+    }
+}
+
+impl<'a, T: 'a + ?Sized, M: 'a + BitMask> ops::Deref for RCellRefMut<'a, T, M> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target { unsafe { &*self.0.inner.get() }}
+}
+
+impl<'a, T: 'a + ?Sized, M: 'a + BitMask> ops::DerefMut for RCellRefMut<'a, T, M> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut *self.0.inner.get() } }
+}
+
 
 // Note: This would benefit from NonZero/Shared ptr support,
 // as well as CoerceUnsized support 
@@ -491,6 +605,9 @@ impl<T, M: BitMask> Strong<T, M> {
 
     #[inline]
     pub fn try_get_mut(&self) -> Result<RefMut<T, M>, State> { self.0.get_refmut() }
+
+    #[inline]
+    pub fn unpoison(&self) -> Result<(), State> { self.0.get().unpoison() }
 }
 
 impl<T, M: BitMask> Drop for Strong<T, M> {
@@ -539,6 +656,9 @@ impl<T, M: BitMask> Weak<T, M> {
 
     #[inline]
     pub fn try_get_strong(&self) -> Result<Strong<T, M>, State> { self.0.get_strong() }
+
+    #[inline]
+    pub fn unpoison(&self) -> Result<(), State> { self.0.get().unpoison() }
 }
 
 impl<T, M: BitMask> Drop for Weak<T, M> {

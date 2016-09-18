@@ -2,8 +2,7 @@
 //!
 //! Features: 
 //!
-//! * Rcc: An `Rc<RefCell<T>>` in just 4 extra bytes of storage, poisoning support,
-//! and no immutable references.
+//! * rc::Strong/Weak/Ref/RefMut: An `Rc<RefCell<T>>` in just a few bytes of storage, and poisoning support.
 //!
 //! * ARef: `OwningRef` with even further erasure of the owner.
 //!

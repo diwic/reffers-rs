@@ -6,21 +6,22 @@ Assorted smart pointers for Rust.
 
 Features:
 
-Rcc
---- 
+Strong / Weak / Ref / RefMut
+----------------------------
 
 This is like `Rc<RefCell<T>>`, but with slightly different trade-offs:
 
- * 4 bytes overhead (compared to 12 or 24 for `Rc<RefCell<T>>`)
+* Configurable overhead (compared to a fixed 24 or 12 for `Rc<RefCell<T>>`)
 
- * One mutable reference, no multiple immutable references. 
-   I e, if RefCell is a single-threaded RwLock, then this is a single-threaded Mutex.
+* The default of 4 bytes overhead gives you max 64 immutable references, 4096 strong references
+  and 4096 weak references, but this can easily be tweaked with just a few lines of code.
 
- * Poisoning support - after a panic during an active lock,
-
- * Max 32767 strong pointers and 32767 weak pointers.
+* Poisoning support - after a panic with an active mutable reference,
+  trying to get mutable or immutable references will return an error.
+  This can be reverted by calling unpoison().
 
 Maybe something for your next tree with parent pointers?
+
 
 ARef
 ----
@@ -29,7 +30,7 @@ ARef takes over where [OwningRef](https://crates.io/crates/owning_ref) ends, by 
 
 This makes it possible to return, say, an `ARef<str>` and have the caller drop the owner
 when done looking at it, without having to bother about whether the owner is a `String`, `Rc<String>`, a
-`Ref<String>`, or something else.
+`Ref<String>`, a simple `&'static str` or something else.
 
 It's also repr(C), so it can be transferred over an FFI boundary (if its target is repr(C), too).
  

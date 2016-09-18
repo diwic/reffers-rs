@@ -1,24 +1,25 @@
 
-use super::{RMBA, Bx, Bxm};
+use super::{RMBA, Bx, Bxm, rc};
 use std::{ptr, mem, fmt};
 use std::ops::Deref;
 use std::rc::Rc;
+
 use std::sync::{Arc, MutexGuard, RwLockReadGuard, RwLockWriteGuard};
 use std::cell::{Ref, RefMut};
 use std::marker::PhantomData;
 
 type ARefStorage = [usize; 3]; 
 
-// An unsafe trait that makes sure the type can be used as owner for ARef.
-//
-// If you implement this for your own types, make sure that
-// 1) it has a Stable address, i e, the reference stays the same even if the object moves and
-// 2) it is no bigger than 3 usizes.
+/// An unsafe trait that makes sure the type can be used as owner for ARef.
+///
+/// If you implement this for your own types, make sure that
+/// 1) it has a Stable address, i e, the reference stays the same even if the object moves and
+/// 2) it is no bigger than 3 usizes.
 pub unsafe trait AReffic: Deref {}
 
-// Runtime verification that a type is in fact AReffic.
-//
-// Use this as a test case in case you implement AReffic for your own type.
+/// Runtime verification that a type is in fact AReffic.
+///
+/// Use this as a test case in case you implement AReffic for your own type.
 pub fn verify_areffic<T: AReffic>(t: T) -> Result<T, & 'static str> {
 
     // Verify size
@@ -45,6 +46,8 @@ unsafe impl<'a, T: ?Sized> AReffic for RMBA<'a, T> {}
 unsafe impl<T: ?Sized> AReffic for Bx<T> {}
 unsafe impl<T: ?Sized> AReffic for Bxm<T> {}
 unsafe impl<T> AReffic for Vec<T> {}
+unsafe impl<T, M: rc::BitMask> AReffic for rc::Ref<T, M> {}
+unsafe impl<T, M: rc::BitMask> AReffic for rc::RefMut<T, M> {}
 unsafe impl AReffic for String {}
 unsafe impl<'a, T: ?Sized> AReffic for &'a T {}
 unsafe impl<'a, T: ?Sized> AReffic for &'a mut T {}
@@ -236,8 +239,8 @@ fn verify_types() {
     assert_eq!(*verify_areffic(r.read().unwrap()).unwrap(), 5u8);
     let m = Mutex::new(5u8);
     assert_eq!(*verify_areffic(m.lock().unwrap()).unwrap(), 5u8);
-//    let r = Rcc::new(5u8);
-//    verify_areffic(r.get()).unwrap();
+    verify_areffic(rc::Ref::<_, u32>::new(5u8)).unwrap();
+    verify_areffic(rc::RefMut::<_, u32>::new(5u8)).unwrap();
 }
 
 /*

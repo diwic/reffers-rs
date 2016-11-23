@@ -68,7 +68,7 @@
 //! ```
 
 use std::cell::{Cell, UnsafeCell};
-use std::{fmt, mem, ptr, error, ops};
+use std::{fmt, mem, ptr, error, ops, borrow, convert};
 use std::marker::PhantomData;
 
 /// The first returned value from BitMask::bits is number of bits for Ref. 
@@ -403,9 +403,6 @@ impl<T, M: BitMask> RCellPtr<T, M> {
     }
 
     #[inline]
-    fn state(&self) -> State { self.get().state() }
-
-    #[inline]
     fn check_drop(&self) {
         let m = self.get().mask.get().get();
         if m & 3 == 1 { return; } // Existing RefMut
@@ -469,6 +466,9 @@ impl<T: ?Sized, M: BitMask> RCellPtr<T, M> {
     fn get(&self) -> &RCell<T, M> { unsafe { &*(*self.0).get() }}
 
     #[inline]
+    fn state(&self) -> State { self.get().state() }
+
+    #[inline]
     fn inc(&self, idx: usize) {
         let mut m = self.get().mask.get();
         m.inc(idx).unwrap();
@@ -526,6 +526,20 @@ impl<T, M: BitMask> ops::Deref for Ref<T, M> {
     fn deref(&self) -> &Self::Target { unsafe { &*self.0.get().inner.get() }}
 }
 
+impl<T: fmt::Display, M: BitMask> fmt::Display for Ref<T, M> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Display::fmt(&**self, f) }
+}
+
+impl<T, M: BitMask> borrow::Borrow<T> for Ref<T, M> {
+    #[inline]
+    fn borrow(&self) -> &T { &**self }
+}
+
+impl<T, M: BitMask> convert::AsRef<T> for Ref<T, M> {
+    #[inline]
+    fn as_ref(&self) -> &T { &**self }
+}
 
 impl<T, M: BitMask> Clone for Ref<T, M> {
     #[inline]
@@ -569,6 +583,20 @@ impl<T, M: BitMask> ops::Deref for RefMut<T, M> {
 impl<T, M: BitMask> ops::DerefMut for RefMut<T, M> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut *self.0.get().inner.get() } }
+}
+
+
+impl<T, M: BitMask> borrow::Borrow<T> for RefMut<T, M> {
+    fn borrow(&self) -> &T { &**self }
+}
+
+impl<T, M: BitMask> convert::AsRef<T> for RefMut<T, M> {
+    fn as_ref(&self) -> &T { &**self }
+}
+
+impl<T: fmt::Display, M: BitMask> fmt::Display for RefMut<T, M> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Display::fmt(&**self, f) }
 }
 
 

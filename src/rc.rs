@@ -423,7 +423,9 @@ unsafe impl<T> Repr for [T] {
     fn convert(s: *mut CSlice<T>) -> *mut [T] {
         unsafe { slice::from_raw_parts_mut((*s).data.as_mut_ptr(), (*s).len as usize) }
     }
-    unsafe fn deallocate_mem<M: BitMask>(_: *mut RCell<Self::Store, M>) { unimplemented!() }
+    unsafe fn deallocate_mem<M: BitMask>(s: *mut RCell<Self::Store, M>) {
+        let _ = Vec::from_raw_parts(s, 0, CSlice::<T>::len_to_capacity((*(*s).inner.get()).len as usize));
+    }
 }
 
 unsafe impl Repr for str {
@@ -460,6 +462,25 @@ impl<M: BitMask> RCellPtr<str, M> {
         mem::forget(v);
         let r: Self = RCellPtr(z);
         unsafe { ptr::copy_nonoverlapping(t.as_ptr(), (*r.get().inner.get()).data.as_mut_ptr(), len) };
+        r
+    }
+}
+
+
+impl<T, M: BitMask> RCellPtr<[T], M> {
+    fn new_slice<I: ExactSizeIterator<Item=T>>(iter: I) -> Self {
+        let len = iter.len();
+        assert!(len <= u32::max_value() as usize);
+        let mut v = Vec::with_capacity(CSlice::<T>::len_to_capacity(len));
+        let cs: CSlice<T> = CSlice { len: len as u32, data: [] }; 
+        v.push(UnsafeCell::new(RCell::new(cs)));
+        let z = v.as_mut_ptr();
+        mem::forget(v);
+        let r: Self = RCellPtr(z);
+        let p = unsafe { (*r.get().inner.get()).data.as_mut_ptr() };
+        for (idx, item) in iter.enumerate() {
+            unsafe { ptr::write(p.offset(idx as isize), item) }
+        }
         r
     }
 }
@@ -598,6 +619,12 @@ impl<T, M: BitMask> Ref<T, M> {
 
 }
 
+impl<T, M: BitMask> Ref<[T], M> {
+    #[inline]
+    pub fn new_slice<I: ExactSizeIterator<Item=T>>(t: I) -> Self { RCellPtr::new_slice(t).get_ref().unwrap() }
+}
+
+
 impl<T: ?Sized + Repr, M: BitMask> Drop for Ref<T, M> {
     fn drop(&mut self) {
         debug_assert_eq!(self.0.state(), State::Borrowed);
@@ -642,6 +669,11 @@ pub struct RefMut<T: ?Sized + Repr, M: BitMask = u32>(RCellPtr<T, M>, PhantomDat
 impl<T, M: BitMask> RefMut<T, M> {
     #[inline]
     pub fn new(t: T) -> Self { RCellPtr::new(t).get_refmut().unwrap() }
+}
+
+impl<T, M: BitMask> RefMut<[T], M> {
+    #[inline]
+    pub fn new_slice<I: ExactSizeIterator<Item=T>>(t: I) -> Self { RCellPtr::new_slice(t).get_refmut().unwrap() }
 }
 
 impl<T: ?Sized + Repr, M: BitMask> RefMut<T, M> {
@@ -705,9 +737,13 @@ impl<T, M: BitMask> Strong<T, M> {
 
 impl<M: BitMask> Strong<str, M> {
     #[inline]
-    pub fn new_str(t: &str) -> Self { RCellPtr::new_str(t).get_ref().unwrap() }
+    pub fn new_str(t: &str) -> Self { RCellPtr::new_str(t).get_strong().unwrap() }
 }
 
+impl<T, M: BitMask> Strong<[T], M> {
+    #[inline]
+    pub fn new_slice<I: ExactSizeIterator<Item=T>>(t: I) -> Self { RCellPtr::new_slice(t).get_strong().unwrap() }
+}
 
 impl<T: ?Sized + Repr, M: BitMask> Strong<T, M> {
     #[inline]
@@ -832,6 +868,11 @@ fn rc_drop() {
     assert_eq!(q.get(), 11);
     drop(z2);
     assert_eq!(q.get(), 73);
+
+    let q2 = Cell::new(12i32); 
+    let z2 = Strong::<_, u32>::new_slice(vec![Dummy(&q2)].into_iter());
+    drop(z2);
+    assert_eq!(q2.get(), 73);
 }
 
 #[test]
@@ -842,4 +883,13 @@ fn rc_str() {
     let r = s.get_weak();
     drop(s);
     assert_eq!(&*r.get_mut(), "Hello world!");
+}
+
+#[test]
+fn rc_slice() {
+    let v = vec![String::from("abc"), String::from("def")];
+    let mut s = RefMut::<[String], u32>::new_slice(v.into_iter());
+    s[1] = String::from("ghi");
+    assert_eq!(&*s[0], "abc");
+    assert_eq!(&*s[1], "ghi");
 }

@@ -68,7 +68,7 @@
 //! ```
 
 use std::cell::{Cell, UnsafeCell};
-use std::{fmt, mem, ptr, error, ops, borrow, convert};
+use std::{fmt, mem, ptr, error, ops, borrow, convert, slice};
 use std::marker::PhantomData;
 
 /// The first returned value from BitMask::bits is number of bits for Ref. 
@@ -380,6 +380,65 @@ impl<'a, T: 'a + ?Sized, M: 'a + BitMask> ops::DerefMut for RCellRefMut<'a, T, M
 }
 
 
+
+#[repr(C)]
+#[derive(Debug)]
+/// This is an implementation detail.
+pub struct CSlice<T> {
+    len: u32,
+    data: [T; 0],
+}
+
+impl<T> CSlice<T> {
+    fn len_to_capacity(l: usize) -> usize {
+        let self_size = mem::size_of::<Self>();
+        let t_size = mem::size_of::<T>();
+        let data_bytes = l * t_size;
+        let r = 1 + ((data_bytes + self_size - 1) / self_size);
+        debug_assert!(self_size * (r - 1) >= l * t_size);
+        r
+    }
+}
+
+/// This is an implementation detail. Please don't mess with it.
+///
+/// It's for abstracting over sized and unsized types.
+pub unsafe trait Repr {
+    type Store;
+    fn convert(*mut Self::Store) -> *mut Self;
+    unsafe fn deallocate_mem<M: BitMask>(*mut RCell<Self::Store, M>);
+}
+
+// Sized types, no problem here
+unsafe impl<T> Repr for T {
+    type Store = T;
+    #[inline]
+    fn convert(s: *mut T) -> *mut T { s }
+    unsafe fn deallocate_mem<M: BitMask>(s: *mut RCell<Self::Store, M>) { let _ = Vec::from_raw_parts(s, 0, 1); }
+}
+
+unsafe impl<T> Repr for [T] {
+    type Store = CSlice<T>;
+    #[inline]
+    fn convert(s: *mut CSlice<T>) -> *mut [T] {
+        unsafe { slice::from_raw_parts_mut((*s).data.as_mut_ptr(), (*s).len as usize) }
+    }
+    unsafe fn deallocate_mem<M: BitMask>(_: *mut RCell<Self::Store, M>) { unimplemented!() }
+}
+
+unsafe impl Repr for str {
+    type Store = CSlice<u8>;
+    #[inline]
+    fn convert(s: *mut CSlice<u8>) -> *mut str { unsafe {
+        let u: *mut [u8] = slice::from_raw_parts_mut((*s).data.as_mut_ptr(), (*s).len as usize);
+        u as *mut str
+    }}
+    unsafe fn deallocate_mem<M: BitMask>(s: *mut RCell<Self::Store, M>) { 
+        let _ = Vec::from_raw_parts(s, 0, CSlice::<u8>::len_to_capacity((*(*s).inner.get()).len as usize));
+    }
+}
+
+
 // Note: This would benefit from NonZero/Shared ptr support,
 // as well as CoerceUnsized support 
 //
@@ -388,7 +447,22 @@ impl<'a, T: 'a + ?Sized, M: 'a + BitMask> ops::DerefMut for RCellRefMut<'a, T, M
 // that this isn't UB
 
 //#[derive(Debug)]
-struct RCellPtr<T: ?Sized, M: BitMask>(*const UnsafeCell<RCell<T, M>>);
+struct RCellPtr<T: ?Sized + Repr, M: BitMask>(*const UnsafeCell<RCell<T::Store, M>>);
+
+impl<M: BitMask> RCellPtr<str, M> {
+    fn new_str(t: &str) -> Self {
+        let len = t.len();
+        assert!(len <= u32::max_value() as usize);
+        let mut v = Vec::with_capacity(CSlice::<u8>::len_to_capacity(len));
+        let cs: CSlice<u8> = CSlice { len: len as u32, data: [] }; 
+        v.push(UnsafeCell::new(RCell::new(cs)));
+        let z = v.as_mut_ptr();
+        mem::forget(v);
+        let r: Self = RCellPtr(z);
+        unsafe { ptr::copy_nonoverlapping(t.as_ptr(), (*r.get().inner.get()).data.as_mut_ptr(), len) };
+        r
+    }
+}
 
 impl<T, M: BitMask> RCellPtr<T, M> {
     fn new(t: T) -> Self {
@@ -401,39 +475,10 @@ impl<T, M: BitMask> RCellPtr<T, M> {
         debug_assert_eq!(r.0 as *const (), r.get() as *const _ as *const ());
         r
     }
+}
 
-    #[inline]
-    fn check_drop(&self) {
-        let m = self.get().mask.get().get();
-        if m & 3 == 1 { return; } // Existing RefMut
-        if (m & (M::mask(BM_REF) + M::mask(BM_STRONG))) != 0 { return; } // Existing Ref or Strong
-        self.do_drop();
-    }
 
-    fn do_drop(&self) {
-        let c = self.get();
-        if c.state() != State::Dropped {
-            self.inc(BM_STRONG); // Prevent double free in case drop_in_place does weird things
-            c.set_state(State::Dropped);
-            unsafe { ptr::drop_in_place(c.inner.get()) };
-            debug_assert_eq!(c.state(), State::Dropped);
-            self.dec(BM_STRONG);
-            debug_assert_eq!(c.mask.get().get() & (M::mask(BM_REF) + M::mask(BM_STRONG)), 0);
-        }
-        if c.mask.get().get() & M::mask(BM_WEAK) != 0 { return };
-        let _ = unsafe { Vec::from_raw_parts((*self.0).get(), 0, 1) };
-    }
-
-    #[inline]
-    fn get_ref(&self) -> Result<Ref<T, M>, State> {
-        let e = self.state();
-        if e == State::Available || e == State::Borrowed {
-            self.inc(BM_REF);
-            Ok(Ref(RCellPtr(self.0), PhantomData))
-        }
-        else { Err(e) }
-    }
-
+impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
     #[inline]
     fn get_refmut(&self) -> Result<RefMut<T, M>, State> {
         let e = self.state();
@@ -459,11 +504,43 @@ impl<T, M: BitMask> RCellPtr<T, M> {
         Weak(RCellPtr(self.0))
     }
 
-}
-
-impl<T: ?Sized, M: BitMask> RCellPtr<T, M> {
     #[inline]
-    fn get(&self) -> &RCell<T, M> { unsafe { &*(*self.0).get() }}
+    fn check_drop(&self) {
+        let m = self.get().mask.get().get();
+        if m & 3 == 1 { return; } // Existing RefMut
+        if (m & (M::mask(BM_REF) + M::mask(BM_STRONG))) != 0 { return; } // Existing Ref or Strong
+        self.do_drop();
+    }
+
+    fn do_drop(&self) {
+        let c = self.get();
+        if c.state() != State::Dropped {
+            self.inc(BM_STRONG); // Prevent double free in case drop_in_place does weird things
+            c.set_state(State::Dropped);
+            unsafe { ptr::drop_in_place(T::convert(c.inner.get())) };
+            debug_assert_eq!(c.state(), State::Dropped);
+            self.dec(BM_STRONG);
+            debug_assert_eq!(c.mask.get().get() & (M::mask(BM_REF) + M::mask(BM_STRONG)), 0);
+        }
+        if c.mask.get().get() & M::mask(BM_WEAK) != 0 { return };
+        unsafe { T::deallocate_mem((*self.0).get()) };
+    }
+
+    #[inline]
+    fn value_ptr(&self) -> *mut T { T::convert(self.get().inner.get()) }
+
+    #[inline]
+    fn get(&self) -> &RCell<T::Store, M> { unsafe { &*(*self.0).get() }}
+
+    #[inline]
+    fn get_ref(&self) -> Result<Ref<T, M>, State> {
+        let e = self.state();
+        if e == State::Available || e == State::Borrowed {
+            self.inc(BM_REF);
+            Ok(Ref(RCellPtr(self.0), PhantomData))
+        }
+        else { Err(e) }
+    }
 
     #[inline]
     fn state(&self) -> State { self.get().state() }
@@ -484,7 +561,9 @@ impl<T: ?Sized, M: BitMask> RCellPtr<T, M> {
 }
 
 
-impl<T: ?Sized + fmt::Debug, M: BitMask + fmt::Debug> fmt::Debug for RCellPtr<T, M> {
+impl<T: ?Sized + Repr, M: BitMask + fmt::Debug> fmt::Debug for RCellPtr<T, M> 
+    where T::Store: fmt::Debug,
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self.get())
     }
@@ -495,12 +574,9 @@ impl<T: ?Sized + fmt::Debug, M: BitMask + fmt::Debug> fmt::Debug for RCellPtr<T,
 /// It's like a strong reference, and a immutably borrowed interior,
 /// in the same struct.
 #[derive(Debug)]
-pub struct Ref<T, M: BitMask = u32>(RCellPtr<T, M>, PhantomData<RCell<T, M>>);
+pub struct Ref<T: ?Sized + Repr, M: BitMask = u32>(RCellPtr<T, M>, PhantomData<RCell<T::Store, M>>);
 
-impl<T, M: BitMask> Ref<T, M> {
-    #[inline]
-    pub fn new(t: T) -> Self { RCellPtr::new(t).get_ref().unwrap() }
-
+impl<T: ?Sized + Repr, M: BitMask> Ref<T, M> {
     #[inline]
     pub fn get(&self) -> Ref<T, M> { self.0.get_ref().unwrap() }
 
@@ -511,7 +587,18 @@ impl<T, M: BitMask> Ref<T, M> {
     pub fn get_weak(&self) -> Weak<T, M> { self.0.get_weak() }
 }
 
-impl<T, M: BitMask> Drop for Ref<T, M> {
+impl<M: BitMask> Ref<str, M> {
+    #[inline]
+    pub fn new_str(t: &str) -> Self { RCellPtr::new_str(t).get_ref().unwrap() }
+}
+
+impl<T, M: BitMask> Ref<T, M> {
+    #[inline]
+    pub fn new(t: T) -> Self { RCellPtr::new(t).get_ref().unwrap() }
+
+}
+
+impl<T: ?Sized + Repr, M: BitMask> Drop for Ref<T, M> {
     fn drop(&mut self) {
         debug_assert_eq!(self.0.state(), State::Borrowed);
         self.0.dec(BM_REF);
@@ -519,29 +606,29 @@ impl<T, M: BitMask> Drop for Ref<T, M> {
     }
 }
 
-impl<T, M: BitMask> ops::Deref for Ref<T, M> {
+impl<T: ?Sized + Repr, M: BitMask> ops::Deref for Ref<T, M> {
     type Target = T;
 
     #[inline]
-    fn deref(&self) -> &Self::Target { unsafe { &*self.0.get().inner.get() }}
+    fn deref(&self) -> &Self::Target { unsafe { &*self.0.value_ptr() }}
 }
 
-impl<T: fmt::Display, M: BitMask> fmt::Display for Ref<T, M> {
+impl<T: ?Sized + Repr + fmt::Display, M: BitMask> fmt::Display for Ref<T, M> {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Display::fmt(&**self, f) }
 }
 
-impl<T, M: BitMask> borrow::Borrow<T> for Ref<T, M> {
+impl<T: ?Sized + Repr, M: BitMask> borrow::Borrow<T> for Ref<T, M> {
     #[inline]
     fn borrow(&self) -> &T { &**self }
 }
 
-impl<T, M: BitMask> convert::AsRef<T> for Ref<T, M> {
+impl<T: ?Sized + Repr, M: BitMask> convert::AsRef<T> for Ref<T, M> {
     #[inline]
     fn as_ref(&self) -> &T { &**self }
 }
 
-impl<T, M: BitMask> Clone for Ref<T, M> {
+impl<T: ?Sized + Repr, M: BitMask> Clone for Ref<T, M> {
     #[inline]
     fn clone(&self) -> Self { self.get() }
 }
@@ -550,12 +637,14 @@ impl<T, M: BitMask> Clone for Ref<T, M> {
 /// An Rc which has mutable access to the inner value. Only
 /// one RefMut can exist, and cannot coexist with any Ref.
 #[derive(Debug)]
-pub struct RefMut<T, M: BitMask = u32>(RCellPtr<T, M>, PhantomData<RCell<T, M>>);
+pub struct RefMut<T: ?Sized + Repr, M: BitMask = u32>(RCellPtr<T, M>, PhantomData<RCell<T::Store, M>>);
 
 impl<T, M: BitMask> RefMut<T, M> {
     #[inline]
     pub fn new(t: T) -> Self { RCellPtr::new(t).get_refmut().unwrap() }
+}
 
+impl<T: ?Sized + Repr, M: BitMask> RefMut<T, M> {
     #[inline]
     pub fn get_strong(&self) -> Strong<T, M> { self.0.get_strong().unwrap() }
 
@@ -563,7 +652,7 @@ impl<T, M: BitMask> RefMut<T, M> {
     pub fn get_weak(&self) -> Weak<T, M> { self.0.get_weak() }
 }
 
-impl<T, M: BitMask> Drop for RefMut<T, M> {
+impl<T: ?Sized + Repr, M: BitMask> Drop for RefMut<T, M> {
     fn drop(&mut self) {
         use std::thread;
         debug_assert_eq!(self.0.state(), State::BorrowedMut);
@@ -573,28 +662,28 @@ impl<T, M: BitMask> Drop for RefMut<T, M> {
     }
 }
 
-impl<T, M: BitMask> ops::Deref for RefMut<T, M> {
+impl<T: ?Sized + Repr, M: BitMask> ops::Deref for RefMut<T, M> {
     type Target = T;
 
     #[inline]
-    fn deref(&self) -> &Self::Target { unsafe { &*self.0.get().inner.get() }}
+    fn deref(&self) -> &Self::Target { unsafe { &*self.0.value_ptr() }}
 }
 
-impl<T, M: BitMask> ops::DerefMut for RefMut<T, M> {
+impl<T: ?Sized + Repr, M: BitMask> ops::DerefMut for RefMut<T, M> {
     #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut *self.0.get().inner.get() } }
+    fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut *self.0.value_ptr() }}
 }
 
 
-impl<T, M: BitMask> borrow::Borrow<T> for RefMut<T, M> {
+impl<T: ?Sized + Repr, M: BitMask> borrow::Borrow<T> for RefMut<T, M> {
     fn borrow(&self) -> &T { &**self }
 }
 
-impl<T, M: BitMask> convert::AsRef<T> for RefMut<T, M> {
+impl<T: ?Sized + Repr, M: BitMask> convert::AsRef<T> for RefMut<T, M> {
     fn as_ref(&self) -> &T { &**self }
 }
 
-impl<T: fmt::Display, M: BitMask> fmt::Display for RefMut<T, M> {
+impl<T: ?Sized + Repr + fmt::Display, M: BitMask> fmt::Display for RefMut<T, M> {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Display::fmt(&**self, f) }
 }
@@ -607,12 +696,20 @@ impl<T: fmt::Display, M: BitMask> fmt::Display for RefMut<T, M> {
 ///
 /// The inner value cannot be dropped while Strong, Ref or RefMut references exist.
 #[derive(Debug)]
-pub struct Strong<T, M: BitMask = u32>(RCellPtr<T, M>, PhantomData<RCell<T, M>>);
+pub struct Strong<T: ?Sized + Repr, M: BitMask = u32>(RCellPtr<T, M>, PhantomData<RCell<T::Store, M>>);
 
 impl<T, M: BitMask> Strong<T, M> {
     #[inline]
     pub fn new(t: T) -> Self { RCellPtr::new(t).get_strong().unwrap() }
+}
 
+impl<M: BitMask> Strong<str, M> {
+    #[inline]
+    pub fn new_str(t: &str) -> Self { RCellPtr::new_str(t).get_ref().unwrap() }
+}
+
+
+impl<T: ?Sized + Repr, M: BitMask> Strong<T, M> {
     #[inline]
     pub fn state(&self) -> State { self.0.state() }
 
@@ -638,14 +735,14 @@ impl<T, M: BitMask> Strong<T, M> {
     pub fn unpoison(&self) -> Result<(), State> { self.0.get().unpoison() }
 }
 
-impl<T, M: BitMask> Drop for Strong<T, M> {
+impl<T: ?Sized + Repr, M: BitMask> Drop for Strong<T, M> {
     fn drop(&mut self) {
         self.0.dec(BM_STRONG);
         self.0.check_drop();
     }
 }
 
-impl<T, M: BitMask> Clone for Strong<T, M> {
+impl<T: ?Sized + Repr, M: BitMask> Clone for Strong<T, M> {
     #[inline]
     fn clone(&self) -> Self { self.get_strong() }
 }
@@ -657,10 +754,10 @@ impl<T, M: BitMask> Clone for Strong<T, M> {
 ///
 /// If only weak references exist to the inner value,
 /// the inner value will be dropped, and can no longer be accessed.
-#[derive(Debug)]
-pub struct Weak<T, M: BitMask = u32>(RCellPtr<T, M>);
+//#[derive(Debug)]
+pub struct Weak<T: ?Sized + Repr, M: BitMask = u32>(RCellPtr<T, M>);
 
-impl<T, M: BitMask> Weak<T, M> {
+impl<T: ?Sized + Repr, M: BitMask> Weak<T, M> {
     #[inline]
     pub fn state(&self) -> State { self.0.state() }
 
@@ -689,14 +786,14 @@ impl<T, M: BitMask> Weak<T, M> {
     pub fn unpoison(&self) -> Result<(), State> { self.0.get().unpoison() }
 }
 
-impl<T, M: BitMask> Drop for Weak<T, M> {
+impl<T: ?Sized + Repr, M: BitMask> Drop for Weak<T, M> {
     fn drop(&mut self) {
         self.0.dec(BM_WEAK);
         self.0.check_drop();
     }
 }
 
-impl<T, M: BitMask> Clone for Weak<T, M> {
+impl<T: ?Sized + Repr, M: BitMask> Clone for Weak<T, M> {
     #[inline]
     fn clone(&self) -> Self { self.get_weak() }
 }
@@ -737,3 +834,12 @@ fn rc_drop() {
     assert_eq!(q.get(), 73);
 }
 
+#[test]
+fn rc_str() {
+    let s = Ref::<_, u32>::new_str("Hello world!");
+    assert_eq!(&*s, "Hello world!");
+    let _q = s.get_strong();
+    let r = s.get_weak();
+    drop(s);
+    assert_eq!(&*r.get_mut(), "Hello world!");
+}

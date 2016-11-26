@@ -392,7 +392,7 @@ impl<'a, T: 'a + ?Sized, M: 'a + BitMask> ops::DerefMut for RCellRefMut<'a, T, M
 
 #[repr(C)]
 #[derive(Debug)]
-/// This is an implementation detail.
+/// This is an implementation detail. Don't worry about it.
 pub struct CSlice<T> {
     len: u32,
     data: [T; 0],
@@ -415,7 +415,7 @@ impl<T> CSlice<T> {
 pub unsafe trait Repr {
     type Store;
     fn convert(*mut Self::Store) -> *mut Self;
-    unsafe fn deallocate_mem<M: BitMask>(*mut RCell<Self::Store, M>);
+    unsafe fn deallocate_mem<M: BitMask>(&mut UnsafeCell<RCell<Self::Store, M>>);
 }
 
 // Sized types, no problem here
@@ -423,7 +423,7 @@ unsafe impl<T> Repr for T {
     type Store = T;
     #[inline]
     fn convert(s: *mut T) -> *mut T { s }
-    unsafe fn deallocate_mem<M: BitMask>(s: *mut RCell<Self::Store, M>) { let _ = Vec::from_raw_parts(s, 0, 1); }
+    unsafe fn deallocate_mem<M: BitMask>(s: &mut UnsafeCell<RCell<Self::Store, M>>) { let _ = Vec::from_raw_parts(s, 0, 1); }
 }
 
 unsafe impl<T> Repr for [T] {
@@ -432,8 +432,8 @@ unsafe impl<T> Repr for [T] {
     fn convert(s: *mut CSlice<T>) -> *mut [T] {
         unsafe { slice::from_raw_parts_mut((*s).data.as_mut_ptr(), (*s).len as usize) }
     }
-    unsafe fn deallocate_mem<M: BitMask>(s: *mut RCell<Self::Store, M>) {
-        let _ = Vec::from_raw_parts(s, 0, CSlice::<T>::len_to_capacity((*(*s).inner.get()).len as usize));
+    unsafe fn deallocate_mem<M: BitMask>(s: &mut UnsafeCell<RCell<Self::Store, M>>) {
+        let _ = Vec::from_raw_parts(s, 0, CSlice::<T>::len_to_capacity((*(*s.get()).inner.get()).len as usize));
     }
 }
 
@@ -444,8 +444,8 @@ unsafe impl Repr for str {
         let u: *mut [u8] = slice::from_raw_parts_mut((*s).data.as_mut_ptr(), (*s).len as usize);
         u as *mut str
     }}
-    unsafe fn deallocate_mem<M: BitMask>(s: *mut RCell<Self::Store, M>) { 
-        let _ = Vec::from_raw_parts(s, 0, CSlice::<u8>::len_to_capacity((*(*s).inner.get()).len as usize));
+    unsafe fn deallocate_mem<M: BitMask>(s: &mut UnsafeCell<RCell<Self::Store, M>>) { 
+        let _ = Vec::from_raw_parts(s, 0, CSlice::<u8>::len_to_capacity((*(*s.get()).inner.get()).len as usize));
     }
 }
 
@@ -458,17 +458,23 @@ unsafe impl Repr for str {
 // that this isn't UB
 
 //#[derive(Debug)]
-struct RCellPtr<T: ?Sized + Repr, M: BitMask>(*const UnsafeCell<RCell<T::Store, M>>);
+struct RCellPtr<T: ?Sized + Repr, M: BitMask>(*mut UnsafeCell<RCell<T::Store, M>>);
+
+fn allocate<T, M: BitMask>(capacity: usize, data: T) -> *mut UnsafeCell<RCell<T,M>> {
+    // Allocate trick from https://github.com/rust-lang/rust/issues/27700
+    debug_assert!(capacity > 0);
+    let mut v = Vec::with_capacity(capacity);
+    v.push(UnsafeCell::new(RCell::new(data)));
+    let z = v.as_mut_ptr();
+    mem::forget(v);
+    z
+}
 
 impl<M: BitMask> RCellPtr<str, M> {
     fn new_str(t: &str) -> Self {
         let len = t.len();
         assert!(len <= u32::max_value() as usize);
-        let mut v = Vec::with_capacity(CSlice::<u8>::len_to_capacity(len));
-        let cs: CSlice<u8> = CSlice { len: len as u32, data: [] }; 
-        v.push(UnsafeCell::new(RCell::new(cs)));
-        let z = v.as_mut_ptr();
-        mem::forget(v);
+        let z = allocate(CSlice::<u8>::len_to_capacity(len), CSlice { len: len as u32, data: [] });
         let r: Self = RCellPtr(z);
         unsafe { ptr::copy_nonoverlapping(t.as_ptr(), (*r.get().inner.get()).data.as_mut_ptr(), len) };
         r
@@ -480,11 +486,7 @@ impl<T, M: BitMask> RCellPtr<[T], M> {
     fn new_slice<I: ExactSizeIterator<Item=T>>(iter: I) -> Self {
         let len = iter.len();
         assert!(len <= u32::max_value() as usize);
-        let mut v = Vec::with_capacity(CSlice::<T>::len_to_capacity(len));
-        let cs: CSlice<T> = CSlice { len: len as u32, data: [] }; 
-        v.push(UnsafeCell::new(RCell::new(cs)));
-        let z = v.as_mut_ptr();
-        mem::forget(v);
+        let z = allocate(CSlice::<T>::len_to_capacity(len), CSlice { len: len as u32, data: [] });
         let r: Self = RCellPtr(z);
         let p = unsafe { (*r.get().inner.get()).data.as_mut_ptr() };
         for (idx, item) in iter.enumerate() {
@@ -496,11 +498,7 @@ impl<T, M: BitMask> RCellPtr<[T], M> {
 
 impl<T, M: BitMask> RCellPtr<T, M> {
     fn new(t: T) -> Self {
-        // Allocate trick from https://github.com/rust-lang/rust/issues/27700
-        let mut v = Vec::with_capacity(1);
-        v.push(UnsafeCell::new(RCell::new(t)));
-        let z = v.as_mut_ptr();
-        mem::forget(v);
+        let z = allocate(1, t);
         let r = RCellPtr(z);
         debug_assert_eq!(r.0 as *const (), r.get() as *const _ as *const ());
         r
@@ -536,14 +534,14 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
     }
 
     #[inline]
-    fn check_drop(&self) {
+    fn check_drop(&mut self) {
         let m = self.get().mask.get().get();
         if m & 3 == 1 { return; } // Existing RefMut
         if (m & (M::mask(BM_REF) + M::mask(BM_STRONG))) != 0 { return; } // Existing Ref or Strong
         self.do_drop();
     }
 
-    fn do_drop(&self) {
+    fn do_drop(&mut self) {
         let c = self.get();
         if c.state() != State::Dropped {
             self.inc(BM_STRONG).unwrap(); // Prevent double free in case drop_in_place does weird things
@@ -554,7 +552,7 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
             debug_assert_eq!(c.mask.get().get() & (M::mask(BM_REF) + M::mask(BM_STRONG)), 0);
         }
         if c.mask.get().get() & M::mask(BM_WEAK) != 0 { return };
-        unsafe { T::deallocate_mem((*self.0).get()) };
+        unsafe { T::deallocate_mem(&mut *self.0) };
     }
 
     #[inline]

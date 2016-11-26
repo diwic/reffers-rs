@@ -38,7 +38,7 @@
 //! use reffers::rc::{Strong, State};
 //!
 //! // Create a strong reference
-//! let strong = Strong::<_, u32>::new(5i32);
+//! let strong = <Strong<_>>::new(5i32);
 //!
 //! // And a weak one
 //! let weak = strong.get_weak();
@@ -860,7 +860,7 @@ fn rc_drop() {
     impl<'a> Drop for Dummy<'a> { fn drop(&mut self) { self.0.set(73) }}
 
     let q = Cell::new(11i32);
-    let z = Strong::<_, u32>::new(Dummy(&q));
+    let z = <Strong<_>>::new(Dummy(&q));
     assert_eq!(z.state(), State::Available);
     let z2 = z.clone();
     drop(z);
@@ -870,14 +870,14 @@ fn rc_drop() {
     assert_eq!(q.get(), 73);
 
     let q2 = Cell::new(12i32); 
-    let z2 = Strong::<_, u32>::new_slice(vec![Dummy(&q2)].into_iter());
+    let z2 = <Strong<_>>::new_slice(vec![Dummy(&q2)].into_iter());
     drop(z2);
     assert_eq!(q2.get(), 73);
 }
 
 #[test]
 fn rc_str() {
-    let s = Ref::<_, u32>::new_str("Hello world!");
+    let s = <Ref<_>>::new_str("Hello world!");
     assert_eq!(&*s, "Hello world!");
     let _q = s.get_strong();
     let r = s.get_weak();
@@ -888,7 +888,7 @@ fn rc_str() {
 #[test]
 fn rc_slice() {
     let v = vec![String::from("abc"), String::from("def")];
-    let mut s = RefMut::<[String], u32>::new_slice(v.into_iter());
+    let mut s = RefMut::<[String]>::new_slice(v.into_iter());
     s[1] = String::from("ghi");
     assert_eq!(&*s[0], "abc");
     assert_eq!(&*s[1], "ghi");

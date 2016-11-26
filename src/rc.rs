@@ -398,15 +398,13 @@ pub struct CSlice<T> {
     data: [T; 0],
 }
 
-impl<T> CSlice<T> {
-    fn len_to_capacity(l: usize) -> usize {
-        let self_size = mem::size_of::<Self>();
-        let t_size = mem::size_of::<T>();
-        let data_bytes = l * t_size;
-        let r = 1 + ((data_bytes + self_size - 1) / self_size);
-        debug_assert!(self_size * (r - 1) >= l * t_size);
-        r
-    }
+fn cslice_len_to_capacity<T, M: BitMask>(l: usize) -> usize {
+    let self_size = mem::size_of::<UnsafeCell<RCell<CSlice<T>, M>>>();
+    let t_size = mem::size_of::<T>();
+    let data_bytes = l * t_size;
+    let r = 1 + ((data_bytes + self_size - 1) / self_size);
+    debug_assert!(self_size * (r - 1) >= l * t_size);
+    r
 }
 
 /// This is an implementation detail. Please don't mess with it.
@@ -433,7 +431,7 @@ unsafe impl<T> Repr for [T] {
         unsafe { slice::from_raw_parts_mut((*s).data.as_mut_ptr(), (*s).len as usize) }
     }
     unsafe fn deallocate_mem<M: BitMask>(s: &mut UnsafeCell<RCell<Self::Store, M>>) {
-        let _ = Vec::from_raw_parts(s, 0, CSlice::<T>::len_to_capacity((*(*s.get()).inner.get()).len as usize));
+        let _ = Vec::from_raw_parts(s, 0, cslice_len_to_capacity::<T, M>((*(*s.get()).inner.get()).len as usize));
     }
 }
 
@@ -445,7 +443,7 @@ unsafe impl Repr for str {
         u as *mut str
     }}
     unsafe fn deallocate_mem<M: BitMask>(s: &mut UnsafeCell<RCell<Self::Store, M>>) { 
-        let _ = Vec::from_raw_parts(s, 0, CSlice::<u8>::len_to_capacity((*(*s.get()).inner.get()).len as usize));
+        let _ = Vec::from_raw_parts(s, 0, cslice_len_to_capacity::<u8, M>((*(*s.get()).inner.get()).len as usize));
     }
 }
 
@@ -474,7 +472,7 @@ impl<M: BitMask> RCellPtr<str, M> {
     fn new_str(t: &str) -> Self {
         let len = t.len();
         assert!(len <= u32::max_value() as usize);
-        let z = allocate(CSlice::<u8>::len_to_capacity(len), CSlice { len: len as u32, data: [] });
+        let z = allocate(cslice_len_to_capacity::<u8, M>(len), CSlice { len: len as u32, data: [] });
         let r: Self = RCellPtr(z);
         unsafe { ptr::copy_nonoverlapping(t.as_ptr(), (*r.get().inner.get()).data.as_mut_ptr(), len) };
         r
@@ -486,7 +484,7 @@ impl<T, M: BitMask> RCellPtr<[T], M> {
     fn new_slice<I: ExactSizeIterator<Item=T>>(iter: I) -> Self {
         let len = iter.len();
         assert!(len <= u32::max_value() as usize);
-        let z = allocate(CSlice::<T>::len_to_capacity(len), CSlice { len: len as u32, data: [] });
+        let z = allocate(cslice_len_to_capacity::<T, M>(len), CSlice { len: len as u32, data: [] });
         let r: Self = RCellPtr(z);
         let p = unsafe { (*r.get().inner.get()).data.as_mut_ptr() };
         for (idx, item) in iter.enumerate() {

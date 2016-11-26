@@ -71,7 +71,7 @@
 //! ```
 
 use std::cell::{Cell, UnsafeCell};
-use std::{fmt, mem, ptr, error, ops, borrow, convert, slice};
+use std::{fmt, mem, ptr, error, ops, borrow, convert, slice, hash, cmp};
 use std::marker::PhantomData;
 
 /// The first returned value from BitMask::bits is number of bits for Ref. 
@@ -601,6 +601,18 @@ impl<T: ?Sized + Repr, M: BitMask + fmt::Debug> fmt::Debug for RCellPtr<T, M>
 ///
 /// It's like a strong reference, and a immutably borrowed interior,
 /// in the same struct.
+///
+/// # Example
+///
+/// ```
+/// use reffers::rc::Ref;
+/// use std::collections::HashMap;
+///
+/// let mut z = HashMap::new();
+/// z.insert(<Ref<_>>::new_str("Test"), 5);
+/// assert_eq!(z.get("Test"), Some(&5));
+/// ```
+
 #[derive(Debug)]
 pub struct Ref<T: ?Sized + Repr, M: BitMask = u32>(RCellPtr<T, M>, PhantomData<RCell<T::Store, M>>);
 
@@ -632,12 +644,21 @@ impl<M: BitMask> Ref<str, M> {
 impl<T, M: BitMask> Ref<T, M> {
     #[inline]
     pub fn new(t: T) -> Self { RCellPtr::new(t).get_ref().unwrap() }
-
 }
 
 impl<T, M: BitMask> Ref<[T], M> {
     #[inline]
     pub fn new_slice<I: ExactSizeIterator<Item=T>>(t: I) -> Self { RCellPtr::new_slice(t).get_ref().unwrap() }
+}
+
+impl<T: Default, M: BitMask> Default for Ref<T, M> {
+    #[inline]
+    fn default() -> Self { Ref::new(Default::default()) }
+}
+
+impl<T, M: BitMask> From<T> for Ref<T, M> {
+    #[inline]
+    fn from(t: T) -> Self { Ref::new(t) }
 }
 
 
@@ -669,6 +690,38 @@ impl<T: ?Sized + Repr, M: BitMask> borrow::Borrow<T> for Ref<T, M> {
 impl<T: ?Sized + Repr, M: BitMask> convert::AsRef<T> for Ref<T, M> {
     #[inline]
     fn as_ref(&self) -> &T { &**self }
+}
+
+impl<T: ?Sized + Repr + hash::Hash, M: BitMask> hash::Hash for Ref<T, M> {
+    #[inline]
+    fn hash<H>(&self, state: &mut H) where H: hash::Hasher { (**self).hash(state) }
+}
+
+impl<T: ?Sized + Repr + PartialEq, M: BitMask> PartialEq for Ref<T, M> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool { **self == **other }
+    #[inline]
+    fn ne(&self, other: &Self) -> bool { **self != **other }
+}
+
+impl<T: ?Sized + Repr + Eq, M: BitMask> Eq for Ref<T, M> {}
+
+impl<T: ?Sized + Repr + PartialOrd, M: BitMask> PartialOrd for Ref<T, M> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> { (**self).partial_cmp(&**other) }
+    #[inline]
+    fn lt(&self, other: &Self) -> bool { **self < **other }
+    #[inline]
+    fn le(&self, other: &Self) -> bool { **self <= **other }
+    #[inline]
+    fn gt(&self, other: &Self) -> bool { **self > **other }
+    #[inline]
+    fn ge(&self, other: &Self) -> bool { **self >= **other }
+}
+
+impl<T: ?Sized + Repr + Ord, M: BitMask> Ord for Ref<T, M> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> cmp::Ordering { (**self).cmp(&**other) }
 }
 
 impl<T: ?Sized + Repr, M: BitMask> Clone for Ref<T, M> {
@@ -734,6 +787,38 @@ impl<T: ?Sized + Repr, M: BitMask> convert::AsRef<T> for RefMut<T, M> {
 impl<T: ?Sized + Repr + fmt::Display, M: BitMask> fmt::Display for RefMut<T, M> {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Display::fmt(&**self, f) }
+}
+
+impl<T: ?Sized + Repr + hash::Hash, M: BitMask> hash::Hash for RefMut<T, M> {
+    #[inline]
+    fn hash<H>(&self, state: &mut H) where H: hash::Hasher { (**self).hash(state) }
+}
+
+impl<T: ?Sized + Repr + PartialEq, M: BitMask> PartialEq for RefMut<T, M> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool { **self == **other }
+    #[inline]
+    fn ne(&self, other: &Self) -> bool { **self != **other }
+}
+
+impl<T: ?Sized + Repr + Eq, M: BitMask> Eq for RefMut<T, M> {}
+
+impl<T: ?Sized + Repr + PartialOrd, M: BitMask> PartialOrd for RefMut<T, M> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> { (**self).partial_cmp(&**other) }
+    #[inline]
+    fn lt(&self, other: &Self) -> bool { **self < **other }
+    #[inline]
+    fn le(&self, other: &Self) -> bool { **self <= **other }
+    #[inline]
+    fn gt(&self, other: &Self) -> bool { **self > **other }
+    #[inline]
+    fn ge(&self, other: &Self) -> bool { **self >= **other }
+}
+
+impl<T: ?Sized + Repr + Ord, M: BitMask> Ord for RefMut<T, M> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> cmp::Ordering { (**self).cmp(&**other) }
 }
 
 
@@ -917,4 +1002,14 @@ fn rc_slice() {
     s[1] = String::from("ghi");
     assert_eq!(&*s[0], "abc");
     assert_eq!(&*s[1], "ghi");
+}
+
+#[test]
+fn rc_hashmap() {
+    use std::collections::HashMap;
+    let mut z = HashMap::new();
+    z.insert(<Ref<_>>::new_str("Short"), 5);
+    z.insert(<Ref<_>>::new_str("This is a long string"), 25);
+    assert_eq!(z.get("Short"), Some(&5));
+    assert_eq!(z.get(""), None);
 }

@@ -1,7 +1,7 @@
 
 use std::sync::Arc;
 use std::marker::PhantomData;
-use std::{fmt, mem};
+use std::{fmt, mem, borrow, cmp, hash};
 use std::ops::Deref;
 
 /// Slightly bigger and slower than RMBA, but same functionality.
@@ -196,6 +196,51 @@ impl<'a, T: 'a + ?Sized> Drop for RMBA<'a, T> {
         }
     }
 }
+
+impl<'a, T: 'a + ?Sized> AsRef<T> for RMBA<'a, T> {
+    fn as_ref(&self) -> &T {
+        &*self
+    }
+}
+
+impl<'a, T: 'a + ?Sized> borrow::Borrow<T> for RMBA<'a, T> {
+    fn borrow(&self) -> &T {
+        &*self
+    }
+}
+
+impl<'a, T: 'a + ?Sized + hash::Hash> hash::Hash for RMBA<'a, T> {
+    #[inline]
+    fn hash<H>(&self, state: &mut H) where H: hash::Hasher { (**self).hash(state) }
+}
+
+impl<'a, T: 'a + ?Sized + PartialEq> PartialEq for RMBA<'a, T> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool { **self == **other }
+    #[inline]
+    fn ne(&self, other: &Self) -> bool { **self != **other }
+}
+
+impl<'a, T: 'a + ?Sized + Eq> Eq for RMBA<'a, T> {}
+
+impl<'a, T: 'a + ?Sized + PartialOrd> PartialOrd for RMBA<'a, T> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> { (**self).partial_cmp(&**other) }
+    #[inline]
+    fn lt(&self, other: &Self) -> bool { **self < **other }
+    #[inline]
+    fn le(&self, other: &Self) -> bool { **self <= **other }
+    #[inline]
+    fn gt(&self, other: &Self) -> bool { **self > **other }
+    #[inline]
+    fn ge(&self, other: &Self) -> bool { **self >= **other }
+}
+
+impl<'a, T: ?Sized + Ord> Ord for RMBA<'a, T> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> cmp::Ordering { (**self).cmp(&**other) }
+}
+
 
 #[test]
 fn rmba_fat() {

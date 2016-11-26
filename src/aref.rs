@@ -1,6 +1,6 @@
 
 use super::{RMBA, Bx, Bxm, rc};
-use std::{ptr, mem, fmt};
+use std::{ptr, mem, fmt, hash, cmp, borrow};
 use std::ops::Deref;
 use std::rc::Rc;
 
@@ -137,6 +137,45 @@ impl<'a, U: ?Sized> AsRef<U> for ARef<'a, U> {
         &*self
     }
 }
+
+impl<'a, U: ?Sized> borrow::Borrow<U> for ARef<'a, U> {
+    fn borrow(&self) -> &U {
+        &*self
+    }
+}
+
+impl<'a, U: ?Sized + hash::Hash> hash::Hash for ARef<'a, U> {
+    #[inline]
+    fn hash<H>(&self, state: &mut H) where H: hash::Hasher { (**self).hash(state) }
+}
+
+impl<'a, U: ?Sized + PartialEq> PartialEq for ARef<'a, U> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool { **self == **other }
+    #[inline]
+    fn ne(&self, other: &Self) -> bool { **self != **other }
+}
+
+impl<'a, U: ?Sized + Eq> Eq for ARef<'a, U> {}
+
+impl<'a, U: ?Sized + PartialOrd> PartialOrd for ARef<'a, U> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> { (**self).partial_cmp(&**other) }
+    #[inline]
+    fn lt(&self, other: &Self) -> bool { **self < **other }
+    #[inline]
+    fn le(&self, other: &Self) -> bool { **self <= **other }
+    #[inline]
+    fn gt(&self, other: &Self) -> bool { **self > **other }
+    #[inline]
+    fn ge(&self, other: &Self) -> bool { **self >= **other }
+}
+
+impl<'a, U: ?Sized + Ord> Ord for ARef<'a, U> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> cmp::Ordering { (**self).cmp(&**other) }
+}
+
 
 impl<'a, U: ?Sized> ARef<'a, U> {
     /// Creates a new ARef from what the ARef points to.

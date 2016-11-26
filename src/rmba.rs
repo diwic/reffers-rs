@@ -262,6 +262,11 @@ fn rmba_box() {
     assert_eq!(*z, 78);
     *z.get_mut().unwrap() = 73;
     assert_eq!(*z, 73);
+
+    assert!(z > RMBA::new_box(72));
+    assert!(z < RMBA::new_box(74));
+    assert!(z == RMBA::new(Arc::new(73)));
+    assert!(z != RMBA::new_box(75));
 }
 
 #[test] 

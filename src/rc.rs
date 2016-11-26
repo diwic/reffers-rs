@@ -2,12 +2,15 @@
 //!
 //! * Configurable overhead (compared to a fixed 24 or 12 for `Rc<RefCell<T>>`)
 //!
-//! * The default of 4 bytes gives you max 64 immutable references, 4096 strong references
-//! and 4096 weak references, but this can easily be tweaked with just a few lines of code.
+//! * The default of 4 bytes gives you max 1024 immutable references, 1024 strong references
+//! and 1024 weak references, but this can easily be tweaked with just a few lines of code.
 //!
 //! * Poisoning support - after a panic with an active mutable reference,
 //! trying to get mutable or immutable references will return an error.
 //! This can be reverted by calling unpoison(). 
+//!
+//! * Supports reference counted `str` and `[T]`. It's represented as a single pointer
+//! (unlike e g `Box<str>`, which is a fat pointer).
 //!
 //! * Lacks CoerceUnsized and NonZero optimisation support (because it is still unstable in libstd).
 //!
@@ -113,7 +116,7 @@ pub unsafe trait BitMask: Copy + Default {
     /// in that order. The first two (least significant) bits are reserved for state.
     ///
     /// Must, of course, always return the same values for the same type,
-    /// and bits may not overflow. 
+    /// and bits may not overflow. Also, there must be at least one bit for Strong references.
     fn bits() -> [u8; 3];
     /// Sets the bitmask to the specified value.
     fn set(&mut self, u64);
@@ -186,10 +189,10 @@ unsafe impl BitMask for u8 {
     fn get(&self) -> u64 { *self as u64 }
 }
 
-/// Using u32 will allow for a maximum of 64 Ref, 4096 Strong and 4096 Weak.
+/// Using u32 will allow for a maximum of 1024 Ref, 1024 Strong and 1024 Weak.
 unsafe impl BitMask for u32 {
     #[inline]
-    fn bits() -> [u8; 3] { [6, 12, 12] }
+    fn bits() -> [u8; 3] { [10, 10, 10] }
 
     #[inline]
     fn set(&mut self, u: u64) { *self = u as Self }
@@ -200,20 +203,20 @@ unsafe impl BitMask for u32 {
 
 #[test]
 fn bitmask() {
-    assert_eq!(u32::mask(BM_REF), 0x000000fc);
-    assert_eq!(u32::mask(BM_STRONG), 0x000fff00);
-    assert_eq!(u32::mask(BM_WEAK), 0xfff00000);
+    assert_eq!(u32::mask(BM_REF),    0x00000ffc);
+    assert_eq!(u32::mask(BM_STRONG), 0x003ff000);
+    assert_eq!(u32::mask(BM_WEAK),   0xffc00000);
     let mut m = 0u32;
     m.inc(BM_WEAK).unwrap();
-    assert_eq!(m, 0x00100000);
-    m = 0xfff00000;
+    assert_eq!(m, 0x00400000);
+    m = 0xffc00000;
     assert!(m.inc(BM_WEAK).is_err());
 }
 
-/// Using u64 will allow for a maximum of 16384 Ref, 2^24 (approx 16 million) Strong and 2^24 Weak.
+/// Using u64 will allow for a maximum of 2097152 Ref, 1048576 Strong and 2097152 Weak.
 unsafe impl BitMask for u64 {
     #[inline]
-    fn bits() -> [u8; 3] { [14, 24, 24] }
+    fn bits() -> [u8; 3] { [21, 20, 21] }
 
     #[inline]
     fn set(&mut self, u: u64) { *self = u as Self }

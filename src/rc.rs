@@ -78,10 +78,7 @@ pub const BM_STRONG: usize = 1;
 /// The third returned value from BitMask::bits is number of bits for Weak. 
 pub const BM_WEAK: usize = 2;
 
-const OVERFLOW_STR: [&'static str; 3] = 
-["Immutable reference count overflow (no more Refs available)", 
-"Strong reference count overflow (no more Strongs available)",
-"Weak reference count overflow (no more Weaks available)"];
+const IDX_TO_STATE: [State; 3] = [State::NotEnoughRefs, State::NotEnoughStrongs, State::NotEnoughWeaks];
 
 /// If you need your own custom Rc, you can implement this for your own type
 /// (e g, a newtype around an integer or so).
@@ -147,12 +144,12 @@ pub unsafe trait BitMask: Copy + Default {
     ///
     /// You probably don't want to implement this; implement the "bits" function instead.
     #[inline]
-    fn inc(&mut self, idx: usize) -> Result<(), &'static str> {
+    fn inc(&mut self, idx: usize) -> Result<(), State> {
         let shift = Self::shifts()[idx];
         let mmask = Self::mask(idx);
         let morig = self.get();
         let m = (morig & mmask) + (1 << shift);
-        if (m & (!mmask)) != 0 { return Err(OVERFLOW_STR[idx]); }
+        if (m & (!mmask)) != 0 { return Err(IDX_TO_STATE[idx]); }
         let m = m | (morig & (!mmask));
         self.set(m);
         Ok(())
@@ -240,6 +237,12 @@ pub enum State {
     Dropped = 3,
     /// Immutably borrowed by one or more Ref.
     Borrowed = 4,
+    /// Returned as error from try_get in case no more immutable references are available
+    NotEnoughRefs = 5,
+    /// Returned as error from try_get_strong in case no more Strong references are available
+    NotEnoughStrongs = 6,
+    /// Returned as error from try_get_weak in case no more Weak references are available
+    NotEnoughWeaks = 7,
 }
 
 impl fmt::Display for State {
@@ -256,6 +259,9 @@ impl error::Error for State {
             State::BorrowedMut => "Rc/cell is mutably borrowed",
             State::Poisoned => "Rc/cell is poisoned",
             State::Dropped => "Rc/cell is dropped",
+            State::NotEnoughRefs => "Immutable reference count overflow (no more Refs available)", 
+            State::NotEnoughStrongs => "Strong reference count overflow (no more Strongs available)",
+            State::NotEnoughWeaks => "Weak reference count overflow (no more Weaks available)"
         }
     }
 }
@@ -312,7 +318,7 @@ impl<T: ?Sized, M: BitMask> RCell<T, M> {
         if s != State::Available && s != State::Borrowed { return Err(s); }
 
         let mut m = self.mask.get();
-        m.inc(BM_REF).unwrap();
+        try!(m.inc(BM_REF));
         self.mask.set(m);
 
         Ok(RCellRef(self))
@@ -514,15 +520,16 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
     fn get_strong(&self) -> Result<Strong<T, M>, State> {
         let e = self.state();
         if e != State::Dropped {
-            self.inc(BM_STRONG); Ok(Strong(RCellPtr(self.0), PhantomData))
+            try!(self.inc(BM_STRONG));
+            Ok(Strong(RCellPtr(self.0), PhantomData))
         }
         else { Err(e) }
     }
 
     #[inline]
-    fn get_weak(&self) -> Weak<T, M> {
-        self.inc(BM_WEAK);
-        Weak(RCellPtr(self.0))
+    fn get_weak(&self) -> Result<Weak<T, M>, State> {
+        try!(self.inc(BM_WEAK));
+        Ok(Weak(RCellPtr(self.0)))
     }
 
     #[inline]
@@ -536,7 +543,7 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
     fn do_drop(&self) {
         let c = self.get();
         if c.state() != State::Dropped {
-            self.inc(BM_STRONG); // Prevent double free in case drop_in_place does weird things
+            self.inc(BM_STRONG).unwrap(); // Prevent double free in case drop_in_place does weird things
             c.set_state(State::Dropped);
             unsafe { ptr::drop_in_place(T::convert(c.inner.get())) };
             debug_assert_eq!(c.state(), State::Dropped);
@@ -557,7 +564,7 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
     fn get_ref(&self) -> Result<Ref<T, M>, State> {
         let e = self.state();
         if e == State::Available || e == State::Borrowed {
-            self.inc(BM_REF);
+            try!(self.inc(BM_REF));
             Ok(Ref(RCellPtr(self.0), PhantomData))
         }
         else { Err(e) }
@@ -567,10 +574,11 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
     fn state(&self) -> State { self.get().state() }
 
     #[inline]
-    fn inc(&self, idx: usize) {
+    fn inc(&self, idx: usize) -> Result<(), State> {
         let mut m = self.get().mask.get();
-        m.inc(idx).unwrap();
+        try!(m.inc(idx));
         self.get().mask.set(m);
+        Ok(())
     }
 
     #[inline]
@@ -605,7 +613,16 @@ impl<T: ?Sized + Repr, M: BitMask> Ref<T, M> {
     pub fn get_strong(&self) -> Strong<T, M> { self.0.get_strong().unwrap() }
 
     #[inline]
-    pub fn get_weak(&self) -> Weak<T, M> { self.0.get_weak() }
+    pub fn get_weak(&self) -> Weak<T, M> { self.0.get_weak().unwrap() }
+
+    #[inline]
+    pub fn try_get(&self) -> Result<Ref<T, M>, State> { self.0.get_ref() }
+
+    #[inline]
+    pub fn try_get_strong(&self) -> Result<Strong<T, M>, State> { self.0.get_strong() }
+
+    #[inline]
+    pub fn try_get_weak(&self) -> Result<Weak<T, M>, State> { self.0.get_weak() }
 }
 
 impl<M: BitMask> Ref<str, M> {
@@ -681,7 +698,7 @@ impl<T: ?Sized + Repr, M: BitMask> RefMut<T, M> {
     pub fn get_strong(&self) -> Strong<T, M> { self.0.get_strong().unwrap() }
 
     #[inline]
-    pub fn get_weak(&self) -> Weak<T, M> { self.0.get_weak() }
+    pub fn get_weak(&self) -> Weak<T, M> { self.0.get_weak().unwrap() }
 }
 
 impl<T: ?Sized + Repr, M: BitMask> Drop for RefMut<T, M> {
@@ -759,13 +776,19 @@ impl<T: ?Sized + Repr, M: BitMask> Strong<T, M> {
     pub fn get_strong(&self) -> Strong<T, M> { self.0.get_strong().unwrap() }
 
     #[inline]
-    pub fn get_weak(&self) -> Weak<T, M> { self.0.get_weak() }
+    pub fn get_weak(&self) -> Weak<T, M> { self.0.get_weak().unwrap() }
 
     #[inline]
     pub fn try_get(&self) -> Result<Ref<T, M>, State> { self.0.get_ref() }
 
     #[inline]
     pub fn try_get_mut(&self) -> Result<RefMut<T, M>, State> { self.0.get_refmut() }
+
+    #[inline]
+    pub fn try_get_strong(&self) -> Result<Strong<T, M>, State> { self.0.get_strong() }
+
+    #[inline]
+    pub fn try_get_weak(&self) -> Result<Weak<T, M>, State> { self.0.get_weak() }
 
     #[inline]
     pub fn unpoison(&self) -> Result<(), State> { self.0.get().unpoison() }
@@ -807,7 +830,7 @@ impl<T: ?Sized + Repr, M: BitMask> Weak<T, M> {
     pub fn get_strong(&self) -> Strong<T, M> { self.0.get_strong().unwrap() }
 
     #[inline]
-    pub fn get_weak(&self) -> Weak<T, M> { self.0.get_weak() }
+    pub fn get_weak(&self) -> Weak<T, M> { self.0.get_weak().unwrap() }
 
     #[inline]
     pub fn try_get(&self) -> Result<Ref<T, M>, State> { self.0.get_ref() }
@@ -817,6 +840,9 @@ impl<T: ?Sized + Repr, M: BitMask> Weak<T, M> {
 
     #[inline]
     pub fn try_get_strong(&self) -> Result<Strong<T, M>, State> { self.0.get_strong() }
+
+    #[inline]
+    pub fn try_get_weak(&self) -> Result<Weak<T, M>, State> { self.0.get_weak() }
 
     #[inline]
     pub fn unpoison(&self) -> Result<(), State> { self.0.get().unpoison() }

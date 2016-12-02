@@ -8,7 +8,15 @@ This is a post for you coming from C, like I did. In C, we use pointers a lot. R
 References
 ----------
 
-The most common Rust pointer replacement is the immutable reference `&` and the mutable reference `&mut`. You probably already know about them, if not, read [the book](https://doc.rust-lang.org/stable/book/references-and-borrowing.html) for an introduction. They should be your first choice whenever practical. Typical usages are function call arguments and local variables. The rest of this guide is about when they are not practical.
+The most common Rust pointer replacement is the immutable reference `&` and the mutable reference `&mut`. You probably already know about them, if not, read [the book](https://doc.rust-lang.org/stable/book/references-and-borrowing.html) for an introduction. They should be your first choice whenever practical.
+
+Typical usages are function call arguments and local variables, and sometimes return values as well - if reachable from the arguments, like this:
+
+    impl Foo {
+        fn get_bar(&self) -> &Bar { &self.bar }
+    }
+
+The rest of this guide is about when they are not practical.
 
 
 
@@ -18,9 +26,9 @@ New / free API
 Here's a typical C API:
 
     typedef struct Foo Foo;
-    *Foo foo_new(void);
-    foo_dosomething(*Foo);
-    foo_free(*Foo);
+    Foo* foo_new(void);
+    foo_dosomething(Foo*);
+    foo_free(Foo*);
 
 If we try to translate this to Rust, we'll soon find that we can't return a `&mut Foo` from `Foo::new`. The idiomatic solution is this:
 
@@ -28,7 +36,7 @@ If we try to translate this to Rust, we'll soon find that we can't return a `&mu
 
     impl Foo {
         pub fn new() -> Foo { /* code */ }
-        pub fn dosomething(&self) { /* code */ }
+        pub fn dosomething(&mut self) { /* code */ }
     }
 
     impl Drop for Foo {
@@ -36,6 +44,8 @@ If we try to translate this to Rust, we'll soon find that we can't return a `&mu
     }
 
 There's no need to hide `Foo` behind a pointer for abstraction purposes, as the fields inside a struct are hidden from the API user by default.
+
+There's also no need to put `Foo` in a `Box` - it's just superfluous to put `Foo` inside a heap allocation. Boxes are commonly used to contain closures and other traits, but rarely used for structs.
 
 
 
@@ -100,7 +110,7 @@ Rc (and Arc)
 
 For longer lived structs, which needs to be referenced from many places, you'll have to resort to [Rc](https://doc.rust-lang.org/std/rc/struct.Rc.html) (or [Arc](https://doc.rust-lang.org/std/sync/struct.Arc.html), the thread safe version). And along comes the usual problems of making sure there are no Rc cycles, or your application will have memory leaks. But in Rust, you'll quickly discover something else: anything inside an Rc cannot be mutated. All you got is an immutable reference.
 
-To the rescue comes [RefCell](https://doc.rust-lang.org/std/cell/struct.RefCell.html), which allows the interior to be mutated even through just an immutable reference. You'll find `Rc<RefCell<T>>` to be a fairly common pattern to resolve this, but it comes with its own twist: now you have to think about avoiding RefCell panics. Here's an example of how a RefCell panic can occur:
+To the rescue comes [RefCell](https://doc.rust-lang.org/std/cell/struct.RefCell.html), which allows the interior to be mutated even through just an immutable reference. You might find `Rc<RefCell<T>>` to be a fairly common pattern to resolve this, but it comes with its own twist: now you have to think about avoiding RefCell panics. Here's an example of how a RefCell panic can occur:
 
     struct Wheel {
         bicycle: Rc<RefCell<Bicycle>>,
@@ -108,15 +118,15 @@ To the rescue comes [RefCell](https://doc.rust-lang.org/std/cell/struct.RefCell.
     }
 
     struct Bicycle {
-        wheels: [Rc<RefCell<Wheel>>; 2],
+        wheels: Vec<Wheel>,
         size: i32,
     }
 
     impl Bicycle {
         pub fn inflate(&mut self) {
             self.size += 1;
-            for w in &self.wheels {
-                w.borrow_mut().adjust_diameter();
+            for w in &mut self.wheels {
+                w.adjust_diameter();
             }
         }
     }
@@ -136,14 +146,14 @@ The solution is to avoid `Rc<RefCell<Bicycle>>` and instead RefCell or [Cell](ht
     }
 
     struct Bicycle {
-        wheels: [Rc<Wheel>; 2],
+        wheels: RefCell<Vec<Wheel>>,
         size: Cell<i32>,
     }
 
     impl Bicycle {
         pub fn inflate(&self) {
             self.size.set(self.size.get() + 1);
-            for w in &self.wheels {
+            for w in &*self.wheels.borrow() {
                 w.adjust_diameter();
             }
         }
@@ -157,7 +167,11 @@ The solution is to avoid `Rc<RefCell<Bicycle>>` and instead RefCell or [Cell](ht
 
 Now we can change the fields inside `Bicycle` and `Wheel`, and still avoid mutable references.
 
-In case memory is scarce, it could be good to remember that every `Rc` (and `Arc`) costs two extra `usize`, and a `RefCell` costs one extra `usize`. `Cell`s have no extra memory cost. If this is a problem, feel free to have a look at [my Rc/RefCell struct](https://docs.rs/reffers/%5E0/reffers/rc/) which has configurable overhead and a few other features that the ordinary Rc/RefCell does not have.
+Two additional notes:
+
+ 1) Cell is generally preferred over RefCell, where both are applicable, because Cell just copies data in and out instead of borrowing it, thereby circumventing the problem. But in many cases Cell won't work, due to the types that a Cell can contain is quite limited.
+
+ 2) In case memory is scarce, it could be good to remember that every `Rc` (and `Arc`) costs two extra `usize`, and a `RefCell` costs one extra `usize`. `Cell`s have no extra memory cost. If this is a problem, feel free to have a look at [my Rc/RefCell struct](https://docs.rs/reffers/%5E0/reffers/rc/) which has configurable overhead and a few other features that the ordinary Rc/RefCell does not have.
 
 
 

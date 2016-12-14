@@ -192,8 +192,8 @@ Being generic over the owner
 Back to our file format example, and let's add a twist: the buffer is allocated by the owner for maximum flexibility. This would allow the API user to point to something else than loading from a file, e g, shared memory, a resource inside the library, something made by the API user in an earlier step, etc. So one API user would like to use your code on a `Vec<u8>`, another has a `&[u8]` on the stack, and so on. If the file is big, it makes sense to avoid extra copies of it in memory. 
 And in C, you would just have this be a pointer as usual, and just not bothering about freeing it when you're done using it.
 
-In Rust, you want anything that you can easily transform into a `&[u8]` to be usable with your file format parser, but you don't want to specify a `&[u8]` (because storing references in struct is often impractical). 
-There is another solution: to be generic over [AsRef](https://doc.rust-lang.org/std/convert/trait.AsRef.html) (or it's mutable version, [AsMut](https://doc.rust-lang.org/std/convert/trait.AsMut.html)), like this:
+In Rust, you want anything that you can easily transform into a `&[u8]` to be usable with your file format parser, but you don't want to specify a `&[u8]` (because storing references in struct is often impractical, see above). 
+There is another solution: to be generic over [AsRef](https://doc.rust-lang.org/std/convert/trait.AsRef.html) (or its mutable version, [AsMut](https://doc.rust-lang.org/std/convert/trait.AsMut.html)), like this:
 
     pub struct MyFileFormat<T: AsRef<[u8]>> {
         file_contents: T,
@@ -213,7 +213,7 @@ Here's a different example where you would use a pointer in C. If you have a fun
 
 ...and only set remainder in case the supplied pointer is not NULL. In Rust, just use a tuple:
 
-    /// Returns a tuple of (dividend, divisor)
+    /// Returns a tuple of (quotient, remainder)
     pub fn divide(dividend: f64, divisor: f64) -> (i64, f64) { /* code */ }
 
 A similar example comes for GLib where many functions have an error pointer:

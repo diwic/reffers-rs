@@ -36,6 +36,13 @@
 //! Weak references. There are also `.try_get()`, `.try_get_mut()` etc functions that return an error instead
 //! of panicking in case the reference is in an incorrect state. 
 //!
+//! # Using only as `Rc` or only as `RefCell`
+//!
+//! If you want to do this like `Rc` and never want to mutate the interior, just use `Ref` like an ordinary rc pointer. 
+//! Combine with `Weak` for weak pointers, if you wish.
+//!
+//! If you want to use the `RefCell` part (e g, for the poisoning) but without reference counting, you can use `RCell` for that.
+//!
 //! # Example
 //! ```
 //! use reffers::rc::{Strong, State};

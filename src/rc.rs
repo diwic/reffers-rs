@@ -123,7 +123,8 @@ pub unsafe trait BitMask: Copy + Default {
     /// in that order. The first two (least significant) bits are reserved for state.
     ///
     /// Must, of course, always return the same values for the same type,
-    /// and bits may not overflow. Also, there must be at least one bit for Strong references.
+    /// and bits may not overflow.
+    /// You need at least one bit that's either Ref or Strong.
     fn bits() -> [u8; 3];
     /// Sets the bitmask to the specified value.
     fn set(&mut self, u64);
@@ -195,6 +196,20 @@ unsafe impl BitMask for u8 {
     #[inline]
     fn get(&self) -> u64 { *self as u64 }
 }
+
+
+/// Using u16 will allow for a maximum of 32 Ref, 16 Strong and 32 Weak.
+unsafe impl BitMask for u16 {
+    #[inline]
+    fn bits() -> [u8; 3] { [5, 4, 5] }
+
+    #[inline]
+    fn set(&mut self, u: u64) { *self = u as u16 }
+
+    #[inline]
+    fn get(&self) -> u64 { *self as u64 }
+}
+
 
 /// Using u32 will allow for a maximum of 1024 Ref, 1024 Strong and 1024 Weak.
 unsafe impl BitMask for u32 {
@@ -549,11 +564,15 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
     fn do_drop(&mut self) {
         let c = self.get();
         if c.state() != State::Dropped {
-            self.inc(BM_STRONG).unwrap(); // Prevent double free in case drop_in_place does weird things
+            // Prevent double free in case drop_in_place does weird things
+            let used_ref = self.inc(BM_REF).is_ok();
+            if !used_ref {
+                self.inc(BM_STRONG).unwrap();
+            }
             c.set_state(State::Dropped);
             unsafe { ptr::drop_in_place(T::convert(c.inner.get())) };
             debug_assert_eq!(c.state(), State::Dropped);
-            self.dec(BM_STRONG);
+            self.dec(if used_ref { BM_REF } else { BM_STRONG });
             debug_assert_eq!(c.mask.get().get() & (M::mask(BM_REF) + M::mask(BM_STRONG)), 0);
         }
         if c.mask.get().get() & M::mask(BM_WEAK) != 0 { return };

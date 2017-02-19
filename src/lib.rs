@@ -17,6 +17,8 @@ pub mod rmba;
 pub mod rc;
 
 pub use aref::ARef as ARef;
+pub use aref::ARefs as ARefs;
+pub use aref::ARefss as ARefss;
 pub use rmba::RMBA as RMBA;
 
 

@@ -66,6 +66,9 @@ unsafe impl<'a, T: ?Sized> AReffic for MutexGuard<'a, T> {}
 /// when done looking at it, without having to bother about whether the owner is a `String`, `Rc<String>`, a
 /// `Ref<String>`, or something else.
 ///
+/// If you want an ARef that's restricted to Send types, use ARefs, and if you want an ARef that's restricted
+/// to Send + Sync types, use ARefss.
+///
 /// Oh, and it's repr(C), so it can be transferred over an FFI boundary
 /// (if its target is repr(C), too).
 ///
@@ -104,6 +107,29 @@ pub struct ARef<'a, U: ?Sized> {
     _dummy: PhantomData<(Rc<()>, &'a ())>
 }
 
+/// ARefs is a version of ARef that implements Send.
+///
+/// It works just like ARef, except that its owner must implement Send, and thus
+/// the struct implements Send as well.
+#[repr(C)]
+#[derive(Debug)]
+pub struct ARefs<'a, U: ?Sized>(ARef<'a, U>);
+
+unsafe impl<'a, U: ?Sized> Send for ARefs<'a, U> {}
+
+/// ARefss is a version of ARef that implements Send + Sync.
+///
+/// It works just like ARef, except that its owner must implement Send + Sync, and thus
+/// the struct implements Send + Sync as well.
+#[repr(C)]
+#[derive(Debug)]
+pub struct ARefss<'a, U: ?Sized>(ARef<'a, U>);
+
+unsafe impl<'a, U: ?Sized> Send for ARefss<'a, U> {}
+
+unsafe impl<'a, U: ?Sized> Sync for ARefss<'a, U> {}
+
+
 // We can't call drop_in_place directly, see https://github.com/rust-lang/rust/issues/34123
 unsafe fn aref_drop_wrapper<T>(t: *mut ARefStorage) {
     ptr::drop_in_place::<T>(t as *mut _ as *mut T);
@@ -132,21 +158,56 @@ impl<'a, U: ?Sized> Deref for ARef<'a, U> {
     }
 }
 
+impl<'a, U: ?Sized> Deref for ARefs<'a, U> {
+    type Target = U;
+    #[inline]
+    fn deref(&self) -> &U { &self.0 }
+}
+
+impl<'a, U: ?Sized> Deref for ARefss<'a, U> {
+    type Target = U;
+    #[inline]
+    fn deref(&self) -> &U { &self.0 }
+}
+
+
 impl<'a, U: ?Sized> AsRef<U> for ARef<'a, U> {
-    fn as_ref(&self) -> &U {
-        &*self
-    }
+    fn as_ref(&self) -> &U { &*self }
+}
+
+impl<'a, U: ?Sized> AsRef<U> for ARefs<'a, U> {
+    fn as_ref(&self) -> &U { &*self }
+}
+
+impl<'a, U: ?Sized> AsRef<U> for ARefss<'a, U> {
+    fn as_ref(&self) -> &U { &*self }
 }
 
 impl<'a, U: ?Sized> borrow::Borrow<U> for ARef<'a, U> {
-    fn borrow(&self) -> &U {
-        &*self
-    }
+    fn borrow(&self) -> &U { &*self }
+}
+
+impl<'a, U: ?Sized> borrow::Borrow<U> for ARefs<'a, U> {
+    fn borrow(&self) -> &U { &*self }
+}
+
+impl<'a, U: ?Sized> borrow::Borrow<U> for ARefss<'a, U> {
+    fn borrow(&self) -> &U { &*self }
 }
 
 impl<'a, U: ?Sized + hash::Hash> hash::Hash for ARef<'a, U> {
     #[inline]
     fn hash<H>(&self, state: &mut H) where H: hash::Hasher { (**self).hash(state) }
+}
+
+impl<'a, U: ?Sized + hash::Hash> hash::Hash for ARefs<'a, U> {
+    #[inline]
+    fn hash<H>(&self, state: &mut H) where H: hash::Hasher { self.0.hash(state) }
+}
+
+impl<'a, U: ?Sized + hash::Hash> hash::Hash for ARefss<'a, U> {
+    #[inline]
+    fn hash<H>(&self, state: &mut H) where H: hash::Hasher { self.0.hash(state) }
 }
 
 impl<'a, U: ?Sized + PartialEq> PartialEq for ARef<'a, U> {
@@ -156,7 +217,25 @@ impl<'a, U: ?Sized + PartialEq> PartialEq for ARef<'a, U> {
     fn ne(&self, other: &Self) -> bool { **self != **other }
 }
 
+impl<'a, U: ?Sized + PartialEq> PartialEq for ARefs<'a, U> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool { self.0.eq(&other.0) }
+    #[inline]
+    fn ne(&self, other: &Self) -> bool { self.0.ne(&other.0) }
+}
+
+impl<'a, U: ?Sized + PartialEq> PartialEq for ARefss<'a, U> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool { self.0.eq(&other.0) }
+    #[inline]
+    fn ne(&self, other: &Self) -> bool { self.0.ne(&other.0) }
+}
+
 impl<'a, U: ?Sized + Eq> Eq for ARef<'a, U> {}
+
+impl<'a, U: ?Sized + Eq> Eq for ARefs<'a, U> {}
+
+impl<'a, U: ?Sized + Eq> Eq for ARefss<'a, U> {}
 
 impl<'a, U: ?Sized + PartialOrd> PartialOrd for ARef<'a, U> {
     #[inline]
@@ -171,9 +250,45 @@ impl<'a, U: ?Sized + PartialOrd> PartialOrd for ARef<'a, U> {
     fn ge(&self, other: &Self) -> bool { **self >= **other }
 }
 
+impl<'a, U: ?Sized + PartialOrd> PartialOrd for ARefs<'a, U> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> { self.0.partial_cmp(&other.0) }
+    #[inline]
+    fn lt(&self, other: &Self) -> bool { self.0.lt(&other.0) }
+    #[inline]
+    fn le(&self, other: &Self) -> bool { self.0.le(&other.0) }
+    #[inline]
+    fn gt(&self, other: &Self) -> bool { self.0.gt(&other.0) }
+    #[inline]
+    fn ge(&self, other: &Self) -> bool { self.0.ge(&other.0) }
+}
+
+impl<'a, U: ?Sized + PartialOrd> PartialOrd for ARefss<'a, U> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> { self.0.partial_cmp(&other.0) }
+    #[inline]
+    fn lt(&self, other: &Self) -> bool { self.0.lt(&other.0) }
+    #[inline]
+    fn le(&self, other: &Self) -> bool { self.0.le(&other.0) }
+    #[inline]
+    fn gt(&self, other: &Self) -> bool { self.0.gt(&other.0) }
+    #[inline]
+    fn ge(&self, other: &Self) -> bool { self.0.ge(&other.0) }
+}
+
 impl<'a, U: ?Sized + Ord> Ord for ARef<'a, U> {
     #[inline]
     fn cmp(&self, other: &Self) -> cmp::Ordering { (**self).cmp(&**other) }
+}
+
+impl<'a, U: ?Sized + Ord> Ord for ARefs<'a, U> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> cmp::Ordering { self.0.cmp(&other.0) }
+}
+
+impl<'a, U: ?Sized + Ord> Ord for ARefss<'a, U> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> cmp::Ordering { self.0.cmp(&other.0) }
 }
 
 
@@ -188,6 +303,7 @@ impl<'a, U: ?Sized> ARef<'a, U> {
     /// let aref = ARef::new(Rc::new(43));
     /// assert_eq!(*aref, 43);
     /// ```
+    #[inline]
     pub fn new<O>(owner: O) -> Self
         where O: 'a + AReffic + Deref<Target = U>
     {
@@ -198,7 +314,6 @@ impl<'a, U: ?Sized> ARef<'a, U> {
     ///
     /// # Example
     /// ```
-    /// use std::rc::Rc;
     /// use reffers::ARef;
     ///
     /// let aref: ARef<[u8]> = vec![0u8, 5, 7].into();
@@ -217,6 +332,77 @@ impl<'a, U: ?Sized> ARef<'a, U> {
             _dummy: PhantomData,
         }
     }
+}
+
+impl<'a, U: ?Sized> ARefs<'a, U> {
+    /// Creates a new ARefs from what the ARefs points to.
+    ///
+    /// # Example
+    /// ```
+    /// use reffers::ARefs;
+    ///
+    /// let aref = ARefs::new(Box::new(43));
+    /// assert_eq!(*aref, 43);
+    /// ```
+    #[inline]
+    pub fn new<O>(owner: O) -> Self
+        where O: 'a + AReffic + Send + Deref<Target = U>
+    {
+        owner.into()
+    }
+
+    /// Maps the ARefs' target to something reachable from the target.
+    ///
+    /// # Example
+    /// ```
+    /// use reffers::ARefs;
+    ///
+    /// let aref: ARefs<[u8]> = vec![0u8, 5, 7].into();
+    /// assert_eq!(*aref.map(|s| &s[1]), 5);
+    /// ```
+    pub fn map<V: ?Sized, F: FnOnce(&U) -> &V>(self, f: F) -> ARefs<'a, V> { ARefs(self.0.map(f)) }
+
+    /// Removes the type information that this struct is Send + Sync.
+    #[inline]
+    pub fn into_aref(self) -> ARef<'a, U> { self.0 }
+}
+
+impl<'a, U: ?Sized> ARefss<'a, U> {
+    /// Creates a new ARefss from what the ARefss points to.
+    ///
+    /// # Example
+    /// ```
+    /// use reffers::ARefss;
+    ///
+    /// let aref = ARefss::new(Box::new(43));
+    /// assert_eq!(*aref, 43);
+    /// ```
+    #[inline]
+    pub fn new<O>(owner: O) -> Self
+        where O: 'a + AReffic + Send + Sync + Deref<Target = U>
+    {
+        owner.into()
+    }
+
+    /// Maps the ARefss' target to something reachable from the target.
+    ///
+    /// # Example
+    /// ```
+    /// use reffers::ARefss;
+    ///
+    /// let aref: ARefss<[u8]> = vec![0u8, 5, 7].into();
+    /// assert_eq!(*aref.map(|s| &s[1]), 5);
+    /// ```
+    #[inline]
+    pub fn map<V: ?Sized, F: FnOnce(&U) -> &V>(self, f: F) -> ARefss<'a, V> { ARefss(self.0.map(f)) }
+
+    /// Removes the type information that this struct is Send + Sync.
+    #[inline]
+    pub fn into_aref(self) -> ARef<'a, U> { self.0 }
+
+    /// Removes the type information that this struct is Sync.
+    #[inline]
+    pub fn into_arefs(self) -> ARefs<'a, U> { ARefs(self.0) }
 }
 
 impl<'a, O: 'a + AReffic + Deref<Target = U>, U: ?Sized> From<O> for ARef<'a, U>
@@ -238,6 +424,20 @@ impl<'a, O: 'a + AReffic + Deref<Target = U>, U: ?Sized> From<O> for ARef<'a, U>
         }
     }
 }
+
+
+impl<'a, O: 'a + AReffic + Send + Deref<Target = U>, U: ?Sized> From<O> for ARefs<'a, U>
+{
+    #[inline]
+    fn from(owner: O) -> Self { ARefs(owner.into()) }
+}
+
+impl<'a, O: 'a + AReffic + Send + Sync + Deref<Target = U>, U: ?Sized> From<O> for ARefss<'a, U>
+{
+    #[inline]
+    fn from(owner: O) -> Self { ARefss(owner.into()) }
+}
+
 
 #[test]
 fn debug_impl() {
@@ -293,6 +493,12 @@ fn compile_fail2<'a>() -> ARef<'a, [&'a u8]> {
     let z = vec![5u8, 4, 3];
     let z2 = vec![&z[0], &z[2]]; 
     z2.into()
+}
+
+fn compile_fail3() -> ARefs<'static, String> {
+    let z = String::from("Hello world");
+    let zz = ::std::rc::Rc::new(z);
+    zz.into()
 }
 */
 

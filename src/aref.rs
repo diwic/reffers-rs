@@ -310,6 +310,18 @@ impl<'a, U: ?Sized> ARef<'a, U> {
         owner.into()
     }
 
+    unsafe fn map_internal<V: ?Sized>(self, v: *const V) -> ARef<'a, V> {
+        let o = self.owner;
+        let d = self.dropfn;
+        mem::forget(self);
+        ARef {
+            target: v,
+            owner: o,
+            dropfn: d,
+            _dummy: PhantomData,
+        }
+    }
+
     /// Maps the ARef's target to something reachable from the target.
     ///
     /// # Example
@@ -321,17 +333,24 @@ impl<'a, U: ?Sized> ARef<'a, U> {
     /// ```
     pub fn map<V: ?Sized, F: FnOnce(&U) -> &V>(self, f: F) -> ARef<'a, V>
     {
-        let t: *const V = f(&self);
-        let o = self.owner;
-        let d = self.dropfn;
-        mem::forget(self);
-        ARef {
-            target: t,
-            owner: o,
-            dropfn: d,
-            _dummy: PhantomData,
-        }
+        let v: *const V = f(&self);
+        unsafe { self.map_internal(v) }
     }
+
+    /// Like map, but with Result passthrough.
+    ///
+    /// # Example
+    /// ```
+    /// use reffers::ARef;
+    ///
+    /// let aref = ARef::<[u8]>::from(vec![0u8, 5, 7]);
+    /// assert_eq!(aref.try_map(|s| s.get(9).ok_or(())), Err(()));
+    /// ```
+    pub fn try_map<E, V: ?Sized, F: FnOnce(&U) -> Result<&V, E>>(self, f: F) -> Result<ARef<'a, V>, E> {
+        let v: *const V = try!(f(&self));
+        unsafe { Ok(self.map_internal(v)) }
+    }
+
 }
 
 impl<'a, U: ?Sized> ARefs<'a, U> {
@@ -360,7 +379,22 @@ impl<'a, U: ?Sized> ARefs<'a, U> {
     /// let aref: ARefs<[u8]> = vec![0u8, 5, 7].into();
     /// assert_eq!(*aref.map(|s| &s[1]), 5);
     /// ```
+    #[inline]
     pub fn map<V: ?Sized, F: FnOnce(&U) -> &V>(self, f: F) -> ARefs<'a, V> { ARefs(self.0.map(f)) }
+
+    /// Like map, but with Result passthrough.
+    ///
+    /// # Example
+    /// ```
+    /// use reffers::ARefs;
+    ///
+    /// let aref = ARefs::<[u8]>::from(vec![0u8, 5, 7]);
+    /// assert_eq!(aref.try_map(|s| s.get(9).ok_or(())), Err(()));
+    /// ```
+    #[inline]
+    pub fn try_map<E, V: ?Sized, F: FnOnce(&U) -> Result<&V, E>>(self, f: F) -> Result<ARefs<'a, V>, E> { 
+        self.0.try_map(f).map(|z| ARefs(z))
+    }
 
     /// Removes the type information that this struct is Send + Sync.
     #[inline]
@@ -395,6 +429,20 @@ impl<'a, U: ?Sized> ARefss<'a, U> {
     /// ```
     #[inline]
     pub fn map<V: ?Sized, F: FnOnce(&U) -> &V>(self, f: F) -> ARefss<'a, V> { ARefss(self.0.map(f)) }
+
+    /// Like map, but with Result passthrough.
+    ///
+    /// # Example
+    /// ```
+    /// use reffers::ARefss;
+    ///
+    /// let aref = ARefss::<[u8]>::from(vec![0u8, 5, 7]);
+    /// assert_eq!(aref.try_map(|s| s.get(9).ok_or(())), Err(()));
+    /// ```
+    #[inline]
+    pub fn try_map<E, V: ?Sized, F: FnOnce(&U) -> Result<&V, E>>(self, f: F) -> Result<ARefss<'a, V>, E> { 
+        self.0.try_map(f).map(|z| ARefss(z))
+    }
 
     /// Removes the type information that this struct is Send + Sync.
     #[inline]

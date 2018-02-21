@@ -4,8 +4,8 @@ use std::{ptr, mem, fmt, hash, cmp, borrow};
 use std::ops::Deref;
 use std::rc::Rc;
 
-use std::sync::{Arc, MutexGuard, RwLockReadGuard, RwLockWriteGuard};
-use std::cell::{Ref, RefMut};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::cell::{Ref, RefMut, RefCell};
 use std::marker::PhantomData;
 
 type ARefStorage = [usize; 3]; 
@@ -16,6 +16,65 @@ type ARefStorage = [usize; 3];
 /// 1) it has a Stable address, i e, the reference stays the same even if the object moves and
 /// 2) it is no bigger than 3 usizes.
 pub unsafe trait AReffic: Deref {}
+
+pub trait Descend {
+    type Inner: Deref;
+    // Really, it's &'a self -> Self::Inner<'a>, but we cannot express that in Rust today
+    unsafe fn descend(&self) -> Self::Inner;
+}
+
+impl<T: 'static> Descend for RefCell<T> {
+    type Inner = Ref<'static, T>;
+    unsafe fn descend(&self) -> Self::Inner { 
+        let x: Ref<T> = self.borrow();
+        mem::transmute(x)
+    }
+}
+
+impl<T: 'static> Descend for RwLock<T> {
+    type Inner = RwLockReadGuard<'static, T>;
+    unsafe fn descend(&self) -> Self::Inner {
+        let x: RwLockReadGuard<T> = self.read().unwrap();
+        mem::transmute(x)
+    }
+}
+
+impl<T: 'static> Descend for Mutex<T> {
+    type Inner = MutexGuard<'static, T>;
+    unsafe fn descend(&self) -> Self::Inner {
+        let x: MutexGuard<T> = self.lock().unwrap();
+        mem::transmute(x)
+    }
+}
+
+
+#[repr(C)]
+struct DescendContainer<T> {
+    dropfn: unsafe fn (*mut ARefStorage),
+    owner: ARefStorage,
+    inner: mem::ManuallyDrop<T>,
+}
+
+impl<T> DescendContainer<T> {
+    fn new<B>(x: ARef<B>, inner: T) -> Box<Self> {
+        let x = mem::ManuallyDrop::new(x);
+        Box::new(DescendContainer {
+            dropfn: x.dropfn,
+            owner: x.owner,
+            inner: mem::ManuallyDrop::new(inner),
+        })
+    }
+}
+
+impl<T> Drop for DescendContainer<T> {
+    fn drop(&mut self) {
+        unsafe {
+            mem::ManuallyDrop::drop(&mut self.inner);
+            (self.dropfn)(&mut self.owner);
+        }
+    }
+}
+
 
 /// Runtime verification that a type is in fact AReffic.
 ///
@@ -291,6 +350,34 @@ impl<'a, U: ?Sized + Ord> Ord for ARefss<'a, U> {
     fn cmp(&self, other: &Self) -> cmp::Ordering { self.0.cmp(&other.0) }
 }
 
+impl<'a, U: Descend> ARef<'a, U> {
+    /// Descends from a ARef<RefCell<T>> to a ARef<T> (or RwLock, or Mutex etc)
+    ///
+    /// # Example
+    /// ```
+    /// use std::sync::{Arc, RwLock};
+    /// use reffers::ARef;
+    ///
+    /// let x = Arc::new(RwLock::new("Hello!"));
+    /// {
+    ///     let aref = ARef::new(x.clone());
+    ///     let hello = ARef::descend_from(aref);
+    ///     // The RwLock is now read locked
+    ///     assert_eq!(*hello, "Hello!");
+    ///     assert!(x.try_write().is_err());
+    /// }
+    /// // The lock is released when the ARef goes out of scope
+    /// assert!(x.try_write().is_ok());
+    /// ```
+    pub fn descend_from(x: Self) -> ARef<'a, <U::Inner as Deref>::Target> {
+        unsafe {
+            let d = (&*x).descend();
+            let dt: *const _ = &*d;
+            let a = DescendContainer::new(x, d);
+            ARef::new_custom(a, dt, aref_drop_wrapper::<Box<DescendContainer<U::Inner>>>)
+        }
+    }
+}
 
 impl<'a, U: ?Sized> ARef<'a, U> {
     /// Creates a new ARef from what the ARef points to.
@@ -308,6 +395,18 @@ impl<'a, U: ?Sized> ARef<'a, U> {
         where O: 'a + AReffic + Deref<Target = U>
     {
         owner.into()
+    }
+
+    unsafe fn new_custom<O>(owner: O, target: *const U, drop_fn: unsafe fn (*mut ARefStorage)) -> Self {
+        let mut storage: ARefStorage = mem::uninitialized();
+        ptr::copy(&owner, &mut storage as *mut _ as *mut O, 1);
+        mem::forget(owner);
+        ARef {
+            target: target,
+            dropfn: drop_fn,
+            owner: storage,
+            _dummy: PhantomData,
+        }
     }
 
     unsafe fn map_internal<V: ?Sized>(self, v: *const V) -> ARef<'a, V> {
@@ -459,17 +558,7 @@ impl<'a, O: 'a + AReffic + Deref<Target = U>, U: ?Sized> From<O> for ARef<'a, U>
         let mut o2 = owner;
         debug_assert!({ o2 = verify_areffic::<O>(o2).unwrap(); true });
         let target: *const U = &*o2;
-        unsafe {
-            let mut storage: ARefStorage = mem::uninitialized();
-            ptr::copy(&o2, &mut storage as *mut _ as *mut O, 1);
-            mem::forget(o2);
-            ARef {
-                target: target,
-                dropfn: aref_drop_wrapper::<O>,
-                owner: storage,
-                _dummy: PhantomData,
-            }
-        }
+        unsafe { ARef::new_custom(o2, target, aref_drop_wrapper::<O>) }
     }
 }
 
@@ -505,29 +594,45 @@ fn verify_drop() {
 }
 
 #[test]
+fn verify_descended_types() {
+    let z = Rc::new(RefCell::new(10u8));
+    let z2 = ARef::new(z.clone());
+    assert_eq!(Rc::strong_count(&z), 2);
+    {
+        let ar: ARef<u8> = ARef::descend_from(z2);
+        assert_eq!(*ar, 10u8);
+        assert_eq!(Rc::strong_count(&z), 2);
+        assert!(z.try_borrow_mut().is_err());
+    }
+    assert_eq!(*z.borrow(), 10u8);
+    assert_eq!(Rc::strong_count(&z), 1);
+    assert!(z.try_borrow_mut().is_ok());
+}
+
+
+#[test]
 fn verify_types() {
-//    use super::Rcc;
-    use std::cell::RefCell;
     use std::sync::{Mutex, RwLock};
-    verify_areffic(Box::new(5u8)).unwrap();
-    verify_areffic(Rc::new(5u8)).unwrap();
-    verify_areffic(Arc::new(5u8)).unwrap();
-    verify_areffic(Bx::new(5u8)).unwrap();
-    verify_areffic(Bxm::new(5u8)).unwrap();
-    verify_areffic(RMBA::from(Arc::new(5u8))).unwrap();
+    let arr = [10u64; 10];
+    verify_areffic(Box::new(arr.clone())).unwrap();
+    verify_areffic(Rc::new(arr.clone())).unwrap();
+    verify_areffic(Arc::new(arr.clone())).unwrap();
+    verify_areffic(Bx::new(arr.clone())).unwrap();
+    verify_areffic(Bxm::new(arr.clone())).unwrap();
+    verify_areffic(RMBA::from(Arc::new(arr.clone()))).unwrap();
     verify_areffic(String::from("Hello aref")).unwrap();
     verify_areffic(vec![4711]).unwrap();
     verify_areffic("This is areffic").unwrap();
-    let r = RefCell::new(5u8);
+    let r = RefCell::new(arr.clone());
     verify_areffic(r.borrow_mut()).unwrap();
     verify_areffic(r.borrow()).unwrap();
-    let r = RwLock::new(5u8);
-    assert_eq!(*verify_areffic(r.write().unwrap()).unwrap(), 5u8);
-    assert_eq!(*verify_areffic(r.read().unwrap()).unwrap(), 5u8);
-    let m = Mutex::new(5u8);
-    assert_eq!(*verify_areffic(m.lock().unwrap()).unwrap(), 5u8);
-    verify_areffic(rc::Ref::<_, u32>::new(5u8)).unwrap();
-    verify_areffic(rc::RefMut::<_, u32>::new(5u8)).unwrap();
+    let r = RwLock::new(arr.clone());
+    assert_eq!(&*verify_areffic(r.write().unwrap()).unwrap(), &arr);
+    assert_eq!(&*verify_areffic(r.read().unwrap()).unwrap(), &arr);
+    let m = Mutex::new(arr.clone());
+    assert_eq!(&*verify_areffic(m.lock().unwrap()).unwrap(), &arr);
+    verify_areffic(rc::Ref::<_, u32>::new(arr.clone())).unwrap();
+    verify_areffic(rc::RefMut::<_, u32>::new(arr.clone())).unwrap();
 }
 
 /*

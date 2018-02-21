@@ -17,10 +17,16 @@ type ARefStorage = [usize; 3];
 /// 2) it is no bigger than 3 usizes.
 pub unsafe trait AReffic: Deref {}
 
+/// An unsafe trait that abstracts over things you can borrow or lock, such as
+/// RefCell, RwLock and Mutex.
+///
+/// You probably do not need to worry about this trait, which
+/// due to the lack of GAT (Generic Associated Types) cannot be expressed safely.
 pub trait Descend {
     type Inner: Deref;
     // Really, it's &'a self -> Self::Inner<'a>, but we cannot express that in Rust today
     unsafe fn descend(&self) -> Self::Inner;
+    unsafe fn try_descend(&self) -> Result<Self::Inner, ()>;
 }
 
 impl<T: 'static> Descend for RefCell<T> {
@@ -28,6 +34,10 @@ impl<T: 'static> Descend for RefCell<T> {
     unsafe fn descend(&self) -> Self::Inner { 
         let x: Ref<T> = self.borrow();
         mem::transmute(x)
+    }
+    unsafe fn try_descend(&self) -> Result<Self::Inner, ()> {
+        let x: Ref<T> = self.try_borrow().map_err(|_| ())?;
+        Ok(mem::transmute(x))
     }
 }
 
@@ -37,6 +47,10 @@ impl<T: 'static> Descend for RwLock<T> {
         let x: RwLockReadGuard<T> = self.read().unwrap();
         mem::transmute(x)
     }
+    unsafe fn try_descend(&self) -> Result<Self::Inner, ()> {
+        let x: RwLockReadGuard<T> = self.try_read().map_err(|_| ())?;
+        Ok(mem::transmute(x))
+    }
 }
 
 impl<T: 'static> Descend for Mutex<T> {
@@ -44,6 +58,10 @@ impl<T: 'static> Descend for Mutex<T> {
     unsafe fn descend(&self) -> Self::Inner {
         let x: MutexGuard<T> = self.lock().unwrap();
         mem::transmute(x)
+    }
+    unsafe fn try_descend(&self) -> Result<Self::Inner, ()> {
+        let x: MutexGuard<T> = self.try_lock().map_err(|_| ())?;
+        Ok(mem::transmute(x))
     }
 }
 
@@ -377,6 +395,23 @@ impl<'a, U: Descend> ARef<'a, U> {
             ARef::new_custom(a, dt, aref_drop_wrapper::<Box<DescendContainer<U::Inner>>>)
         }
     }
+
+    /// Descends from a ARef<RefCell<T>> to a ARef<T> (or RwLock, or Mutex etc)
+    ///
+    /// Fails if the RefCell/RwLock/Mutex is busy (or poisoned).
+    pub fn try_descend_from(x: Self) -> Result<ARef<'a, <U::Inner as Deref>::Target>, Self> {
+        unsafe {
+            match (&*x).try_descend() {
+                Err(_) => Err(x),
+                Ok(d) => {
+                    let dt: *const _ = &*d;
+                    let a = DescendContainer::new(x, d);
+                    Ok(ARef::new_custom(a, dt, aref_drop_wrapper::<Box<DescendContainer<U::Inner>>>))
+                }
+            }
+        }
+    }
+
 }
 
 impl<'a, U: ?Sized> ARef<'a, U> {

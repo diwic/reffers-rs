@@ -2,7 +2,7 @@
 //!
 //! * Configurable overhead (compared to a fixed 24 or 12 for `Rc<RefCell<T>>`)
 //!
-//! * The default of 4 bytes gives you max 1024 immutable references, 1024 strong references
+//! * E g, 4 bytes gives you max 1024 immutable references, 1024 strong references
 //! and 1024 weak references, but this can easily be tweaked with just a few lines of code.
 //!
 //! * Poisoning support - after a panic with an active mutable reference,
@@ -12,7 +12,7 @@
 //! * Supports reference counted `str` and `[T]`. It's represented as a single pointer
 //! (unlike e g `Box<str>`, which is a fat pointer).
 //!
-//! * Lacks CoerceUnsized and NonZero optimisation support (because it is still unstable in libstd).
+//! * Lacks CoerceUnsized optimisation support (because it is still unstable in libstd).
 //!
 //! * Last but not least, just writing `.get()` is less characters than `.upgrade().unwrap().borrow()`
 //! that you would do with a `Weak<RefCell<T>>`.
@@ -45,10 +45,11 @@
 //!
 //! # Example
 //! ```
-//! use reffers::rc::{Strong, State};
+//! use reffers::rc::State;
+//! use reffers::rc4::Strong;
 //!
 //! // Create a strong reference
-//! let strong = <Strong<_>>::new(5i32);
+//! let strong = Strong::new(5i32);
 //!
 //! // And a weak one
 //! let weak = strong.get_weak();
@@ -79,6 +80,7 @@
 
 use std::cell::{Cell, UnsafeCell};
 use std::{fmt, mem, ptr, error, ops, borrow, convert, slice, hash, cmp};
+use std::ptr::NonNull;
 use std::marker::PhantomData;
 
 /// The first returned value from BitMask::bits is number of bits for Ref. 
@@ -412,6 +414,7 @@ impl<'a, T: 'a + ?Sized, M: 'a + BitMask> ops::DerefMut for RCellRefMut<'a, T, M
 
 
 
+#[doc(hidden)]
 #[repr(C)]
 #[derive(Debug)]
 /// This is an implementation detail. Don't worry about it.
@@ -432,6 +435,7 @@ fn cslice_len_to_capacity<T, M: BitMask>(l: usize) -> usize {
 /// This is an implementation detail. Please don't mess with it.
 ///
 /// It's for abstracting over sized and unsized types.
+#[doc(hidden)]
 pub unsafe trait Repr {
     type Store;
     fn convert(*mut Self::Store) -> *mut Self;
@@ -478,16 +482,17 @@ unsafe impl Repr for str {
 // that this isn't UB
 
 //#[derive(Debug)]
-struct RCellPtr<T: ?Sized + Repr, M: BitMask>(*mut UnsafeCell<RCell<T::Store, M>>);
+struct RCellPtr<T: ?Sized + Repr, M: BitMask>(NonNull<UnsafeCell<RCell<T::Store, M>>>);
 
-fn allocate<T, M: BitMask>(capacity: usize, data: T) -> *mut UnsafeCell<RCell<T,M>> {
+fn allocate<T, M: BitMask>(capacity: usize, data: T) -> NonNull<UnsafeCell<RCell<T,M>>> {
     // Allocate trick from https://github.com/rust-lang/rust/issues/27700
     debug_assert!(capacity > 0);
     let mut v = Vec::with_capacity(capacity);
     v.push(UnsafeCell::new(RCell::new(data)));
     let z = v.as_mut_ptr();
     mem::forget(v);
-    z
+    debug_assert!(z != ptr::null_mut());
+    unsafe { NonNull::new_unchecked(z) }
 }
 
 impl<M: BitMask> RCellPtr<str, M> {
@@ -520,7 +525,7 @@ impl<T, M: BitMask> RCellPtr<T, M> {
     fn new(t: T) -> Self {
         let z = allocate(1, t);
         let r = RCellPtr(z);
-        debug_assert_eq!(r.0 as *const (), r.get() as *const _ as *const ());
+        debug_assert_eq!(r.0.as_ptr() as *const (), r.get() as *const _ as *const ());
         r
     }
 }
@@ -562,28 +567,30 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
     }
 
     fn do_drop(&mut self) {
-        let c = self.get();
-        if c.state() != State::Dropped {
-            // Prevent double free in case drop_in_place does weird things
-            let used_ref = self.inc(BM_REF).is_ok();
-            if !used_ref {
-                self.inc(BM_STRONG).unwrap();
+        {
+            let c = self.get();
+            if c.state() != State::Dropped {
+                // Prevent double free in case drop_in_place does weird things
+                let used_ref = self.inc(BM_REF).is_ok();
+                if !used_ref {
+                    self.inc(BM_STRONG).unwrap();
+                }
+                c.set_state(State::Dropped);
+                unsafe { ptr::drop_in_place(T::convert(c.inner.get())) };
+                debug_assert_eq!(c.state(), State::Dropped);
+                self.dec(if used_ref { BM_REF } else { BM_STRONG });
+                debug_assert_eq!(c.mask.get().get() & (M::mask(BM_REF) + M::mask(BM_STRONG)), 0);
             }
-            c.set_state(State::Dropped);
-            unsafe { ptr::drop_in_place(T::convert(c.inner.get())) };
-            debug_assert_eq!(c.state(), State::Dropped);
-            self.dec(if used_ref { BM_REF } else { BM_STRONG });
-            debug_assert_eq!(c.mask.get().get() & (M::mask(BM_REF) + M::mask(BM_STRONG)), 0);
+            if c.mask.get().get() & M::mask(BM_WEAK) != 0 { return };
         }
-        if c.mask.get().get() & M::mask(BM_WEAK) != 0 { return };
-        unsafe { T::deallocate_mem(&mut *self.0) };
+        unsafe { T::deallocate_mem(self.0.as_mut()) };
     }
 
     #[inline]
     fn value_ptr(&self) -> *mut T { T::convert(self.get().inner.get()) }
 
     #[inline]
-    fn get(&self) -> &RCell<T::Store, M> { unsafe { &*(*self.0).get() }}
+    fn get(&self) -> &RCell<T::Store, M> { unsafe { &*(self.0.as_ref()).get() }}
 
     #[inline]
     fn get_ref(&self) -> Result<Ref<T, M>, State> {
@@ -1013,7 +1020,7 @@ fn rc_drop() {
 
 #[test]
 fn rc_str() {
-    let s = <Ref<_>>::new_str("Hello world!");
+    let s = ::rc2::Ref::new_str("Hello world!");
     assert_eq!(&*s, "Hello world!");
     let _q = s.get_strong();
     let r = s.get_weak();

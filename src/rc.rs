@@ -14,13 +14,13 @@
 //!
 //! * Lacks CoerceUnsized optimisation support (because it is still unstable in libstd).
 //!
-//! * Last but not least, just writing `.get()` is less characters than `.upgrade().unwrap().borrow()`
+//! * Last but not least, just writing `.get_ref()` is less characters than `.upgrade().unwrap().borrow()`
 //! that you would do with a `Weak<RefCell<T>>`.
 //!
 //! # Four structs
 //!
 //! * `Strong` - A strong reference to the inner value, keeping it from being dropped.
-//!   To access the inner value, use `.get()` or `.get_mut()` to create `Ref` and `RefMut` structs.
+//!   To access the inner value, use `.get_ref()` or `.get_refmut()` to create `Ref` and `RefMut` structs.
 //!
 //! * `Ref` - A strong reference to the inner value, with immutable access to the inner value.
 //!
@@ -30,10 +30,10 @@
 //! * `Weak` - A weak reference, the inner value will be dropped when no other types of references exist.
 //!   This can be helpful w r t breaking up cycles of Strong references.
 //!   There is no need to "upgrade" a weak reference to a strong reference just to access the inner value -
-//!   just call `.get()` or `.get_mut()` on the weak reference directly.
+//!   just call `.get_ref()` or `.get_refmut()` on the weak reference directly.
 //!
 //! Where applicable, there are `.get_strong()` and `.get_weak()` functions that create new Strong and
-//! Weak references. There are also `.try_get()`, `.try_get_mut()` etc functions that return an error instead
+//! Weak references. There are also `.try_get_ref()`, `.try_get_refmut()` etc functions that return an error instead
 //! of panicking in case the reference is in an incorrect state. 
 //!
 //! # Using only as `Rc` or only as `RefCell`
@@ -55,7 +55,7 @@
 //! let weak = strong.get_weak();
 //!
 //! // Change the inner value
-//! *weak.get_mut() = 7i32;
+//! *weak.get_refmut() = 7i32;
 //!
 //! // Inspect the change
 //! {
@@ -64,12 +64,12 @@
 //!
 //!     // We cannot change the value from the other reference
 //!     // now. It is still borrowed...
-//!     assert_eq!(weak.try_get_mut().unwrap_err(), State::Borrowed);
+//!     assert_eq!(weak.try_get_refmut().unwrap_err(), State::Borrowed);
 //! }
 //!
 //! // But now we can.
 //! assert_eq!(strong.state(), State::Available);
-//! *strong.get_mut() = 9i32;
+//! *strong.get_refmut() = 9i32;
 //!
 //! // Drop the strong reference, this drops the inner value as well
 //! drop(strong);
@@ -250,6 +250,9 @@ rc_bit_mask!(primitive, u16, 5, 4, 5);
 
 /// Using u32 will allow for a maximum of 1024 Ref, 1024 Strong and 1024 Weak.
 rc_bit_mask!(primitive, u32, 10, 10, 10);
+
+/// Usize defaults to same as u32.
+rc_bit_mask!(primitive, usize, 10, 10, 10);
 
 /// Using u64 will allow for a maximum of 2097152 Ref, 1048576 Strong and 2097152 Weak.
 rc_bit_mask!(primitive, u64, 21, 20, 21);
@@ -752,7 +755,7 @@ impl<T: ?Sized + Repr + Ord, M: BitMask> Ord for Ref<T, M> {
 
 impl<T: ?Sized + Repr, M: BitMask> Clone for Ref<T, M> {
     #[inline]
-    fn clone(&self) -> Self { self.get() }
+    fn clone(&self) -> Self { self.get_ref() }
 }
 
 
@@ -839,7 +842,7 @@ impl<T: ?Sized + Repr + Ord, M: BitMask> Ord for RefMut<T, M> {
 /// A strong reference without access to the inner value.
 ///
 /// To get immutable/mutable access, you need to use the 
-/// get/get_mut functions to create Ref or RefMut references.
+/// get_ref/get_refmut functions to create Ref or RefMut references.
 ///
 /// The inner value cannot be dropped while Strong, Ref or RefMut references exist.
 #[derive(Debug)]
@@ -868,7 +871,7 @@ impl<T: ?Sized + Repr, M: BitMask> Clone for Strong<T, M> {
 /// A weak reference without access to the inner value.
 ///
 /// To get immutable/mutable access, you need to use the 
-/// get/get_mut functions to create Ref or RefMut references.
+/// get_ref/get_refmut functions to create Ref or RefMut references.
 ///
 /// If only weak references exist to the inner value,
 /// the inner value will be dropped, and can no longer be accessed.
@@ -900,16 +903,16 @@ fn rc_basic() {
     let z2 = z.clone();
     assert_eq!(z2.state(), State::Available);
     {
-        let mut r = z2.get_mut();
+        let mut r = z2.get_refmut();
         assert_eq!(z.state(), State::BorrowedMut);
         assert_eq!(*r, 5i32);
         *r = 6i32;
-        assert!(z.try_get().is_err());
+        assert!(z.try_get_ref().is_err());
     }
     assert_eq!(z2.state(), State::Available);
-    assert_eq!(*z.get(), 6i32);
+    assert_eq!(*z.get_ref(), 6i32);
     drop(z2);
-    assert_eq!(*z.get(), 6i32);
+    assert_eq!(*z.get_ref(), 6i32);
 }
 
 
@@ -941,7 +944,7 @@ fn rc_str() {
     let _q = s.get_strong();
     let r = s.get_weak();
     drop(s);
-    assert_eq!(&*r.get_mut(), "Hello world!");
+    assert_eq!(&*r.get_refmut(), "Hello world!");
 }
 
 #[test]

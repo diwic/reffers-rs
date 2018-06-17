@@ -39,10 +39,18 @@ macro_rules! impl_get_refmut {
     () => {
 
     #[inline]
+    #[deprecated(note="Renamed to get_refmut")]
     pub fn get_mut(&self) -> RefMut<T, M> { self.0.get_refmut().unwrap() }
 
     #[inline]
+    #[deprecated(note="Renamed to try_get_refmut")]
     pub fn try_get_mut(&self) -> Result<RefMut<T, M>, State> { self.0.get_refmut() }
+
+    #[inline]
+    pub fn get_refmut(&self) -> RefMut<T, M> { self.0.get_refmut().unwrap() }
+
+    #[inline]
+    pub fn try_get_refmut(&self) -> Result<RefMut<T, M>, State> { self.0.get_refmut() }
 
     }
 }
@@ -51,9 +59,17 @@ macro_rules! impl_get_ref {
     () => {
 
     #[inline]
-    pub fn get(&self) -> Ref<T, M> { self.0.get_ref().unwrap() }
+    pub fn get_ref(&self) -> Ref<T, M> { self.0.get_ref().unwrap() }
 
     #[inline]
+    pub fn try_get_ref(&self) -> Result<Ref<T, M>, State> { self.0.get_ref() }
+
+    #[inline]
+    #[deprecated(note="Renamed to get_ref")]
+    pub fn get(&self) -> Ref<T, M> { self.get_ref() }
+
+    #[inline]
+    #[deprecated(note="Renamed to try_get_ref")]
     pub fn try_get(&self) -> Result<Ref<T, M>, State> { self.0.get_ref() }
 
     }

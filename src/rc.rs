@@ -3,7 +3,7 @@
 //! * Configurable overhead (compared to a fixed 24 or 12 for `Rc<RefCell<T>>`)
 //!
 //! * E g, 4 bytes gives you max 1024 immutable references, 1024 strong references
-//! and 1024 weak references, but this can easily be tweaked with just a few lines of code.
+//! and 1024 weak references, but this can easily be tweaked with the `rc_bit_mask` macro.
 //!
 //! * Poisoning support - after a panic with an active mutable reference,
 //! trying to get mutable or immutable references will return an error.
@@ -92,30 +92,9 @@ pub const BM_WEAK: usize = 2;
 
 const IDX_TO_STATE: [State; 3] = [State::NotEnoughRefs, State::NotEnoughStrongs, State::NotEnoughWeaks];
 
-/// If you need your own custom Rc, you can implement this for your own type
-/// (e g, a newtype around an integer or so).
-///
-/// Declaring these functions with #[inline] is recommended for performance.
-/// You only need to implement bits (the actual config), get and set functions. 
-///
-/// # Example
-/// ```
-/// #[macro_use]
-/// extern crate reffers;
-///
-/// #[derive(Debug, Copy, Clone, Default)]
-/// struct ManyWeak(u32);
-///
-/// // We want 4 Refs, only one Strong, and as many Weaks as possible
-/// // for the 32 bits of overhead that we are willing to accept.
-/// // In total, this must add up to 30 bits (32 bits, save 2 for status).
-/// rc_bit_mask!(ManyWeak, u32, 2, 1, 27);
-///
-/// # fn main() {}
-/// ```
 pub unsafe trait BitMask: Copy + Default {
     /// The internal primitive type, usually u8, u16, u32 or u64.
-    type Num: Copy + Default + ops::BitAnd<Output=Self::Num> + cmp::PartialEq +
+    type Num: Copy + ops::BitAnd<Output=Self::Num> + cmp::PartialEq +
        ops::Add<Output=Self::Num> + ops::Sub<Output=Self::Num> + From<u8> + ops::Not<Output=Self::Num>;
 
     /// A triple of bits reserved for Ref, Strong and Weak -
@@ -182,6 +161,31 @@ pub unsafe trait BitMask: Copy + Default {
 }
 
 
+/// If you need your own rc with custom overhead, you can invoke this macro for your own type
+/// (which is normally a newtype around an integer).
+///
+/// # Example
+/// ```
+/// #[macro_use]
+/// extern crate reffers;
+/// use reffers::rc::Ref;
+///
+/// #[derive(Debug, Copy, Clone, Default)]
+/// struct ManyWeak(u32);
+///
+/// // We want 16 Refs, no Strongs, and as many Weaks as possible
+/// // for the 32 bits of overhead that we are willing to accept.
+/// // In total, this must add up to max 30 bits (32 bits minus 2 for status).
+/// rc_bit_mask!(ManyWeak, u32, 4, 0, 26);
+///
+/// fn main() {
+///     let r: Ref<str, ManyWeak> = Ref::new_str("Hi!");
+///     // We can create weaks
+///     let w = r.get_weak();
+///     // ...but no strongs
+///     assert!(w.try_get_strong().is_err());
+/// }
+/// ```
 #[macro_export]
 macro_rules! rc_bit_mask {
     (masks, $t: ty, $r:expr, $s: expr, $w: expr) => {
@@ -208,12 +212,7 @@ macro_rules! rc_bit_mask {
             rc_bit_mask!(masks, $t, $r, $s, $w);
 
             #[inline]
-            // fn set(&mut self, u: u64) { *self = u as $t }
-
-            #[inline]
             fn get_state(&self) -> u8 { (*self & 3) as u8 }
-
-            // fn get(&self) -> u64 { *self as u64 }
 
             #[inline]
             fn get_inner(&self) -> Self::Num { *self }
@@ -230,11 +229,7 @@ macro_rules! rc_bit_mask {
             rc_bit_mask!(masks, $t_int, $r, $s, $w);
 
             #[inline]
-            // fn set(&mut self, u: u64) { self.0 = u as $t_int }
-
-            #[inline]
             fn get_state(&self) -> u8 { (self.0 & 3) as u8 }
-            // fn get(&self) -> u64 { self.0 as u64 }
 
             #[inline]
             fn get_inner(&self) -> Self::Num { self.0 }
@@ -517,7 +512,7 @@ unsafe impl Repr for str {
 // that this isn't UB
 
 //#[derive(Debug)]
-struct RCellPtr<T: ?Sized + Repr, M: BitMask>(NonNull<UnsafeCell<RCell<T::Store, M>>>);
+struct RCellPtr<T: ?Sized + Repr, M: BitMask>(NonNull<UnsafeCell<RCell<T::Store, M>>>, PhantomData<T>);
 
 fn allocate<T, M: BitMask>(capacity: usize, data: T) -> NonNull<UnsafeCell<RCell<T,M>>> {
     // Allocate trick from https://github.com/rust-lang/rust/issues/27700
@@ -535,7 +530,7 @@ impl<M: BitMask> RCellPtr<str, M> {
         let len = t.len();
         assert!(len <= u32::max_value() as usize);
         let z = allocate(cslice_len_to_capacity::<u8, M>(len), CSlice { len: len as u32, data: [] });
-        let r: Self = RCellPtr(z);
+        let r: Self = RCellPtr(z, PhantomData);
         unsafe { ptr::copy_nonoverlapping(t.as_ptr(), (*r.get().inner.get()).data.as_mut_ptr(), len) };
         r
     }
@@ -547,7 +542,7 @@ impl<T, M: BitMask> RCellPtr<[T], M> {
         let len = iter.len();
         assert!(len <= u32::max_value() as usize);
         let z = allocate(cslice_len_to_capacity::<T, M>(len), CSlice { len: len as u32, data: [] });
-        let r: Self = RCellPtr(z);
+        let r: Self = RCellPtr(z, PhantomData);
         let p = unsafe { (*r.get().inner.get()).data.as_mut_ptr() };
         for (idx, item) in iter.enumerate() {
             unsafe { ptr::write(p.offset(idx as isize), item) }
@@ -559,7 +554,7 @@ impl<T, M: BitMask> RCellPtr<[T], M> {
 impl<T, M: BitMask> RCellPtr<T, M> {
     fn new(t: T) -> Self {
         let z = allocate(1, t);
-        let r = RCellPtr(z);
+        let r = RCellPtr(z, PhantomData);
         debug_assert_eq!(r.0.as_ptr() as *const (), r.get() as *const _ as *const ());
         r
     }
@@ -572,7 +567,7 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
         let e = self.state();
         if e == State::Available {
             self.get().set_state(State::BorrowedMut);
-            Ok(RefMut(RCellPtr(self.0), PhantomData))
+            Ok(RefMut(RCellPtr(self.0, PhantomData), PhantomData))
         }
         else { Err(e) }
     }
@@ -582,7 +577,7 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
         let e = self.state();
         if e != State::Dropped {
             try!(self.inc(BM_STRONG));
-            Ok(Strong(RCellPtr(self.0), PhantomData))
+            Ok(Strong(RCellPtr(self.0, PhantomData), PhantomData))
         }
         else { Err(e) }
     }
@@ -590,7 +585,7 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
     #[inline]
     fn get_weak(&self) -> Result<Weak<T, M>, State> {
         try!(self.inc(BM_WEAK));
-        Ok(Weak(RCellPtr(self.0)))
+        Ok(Weak(RCellPtr(self.0, PhantomData)))
     }
 
     #[inline]
@@ -634,7 +629,7 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
         let e = self.state();
         if e == State::Available || e == State::Borrowed {
             try!(self.inc(BM_REF));
-            Ok(Ref(RCellPtr(self.0), PhantomData))
+            Ok(Ref(RCellPtr(self.0, PhantomData), PhantomData))
         }
         else { Err(e) }
     }
@@ -687,50 +682,11 @@ impl<T: ?Sized + Repr, M: BitMask + fmt::Debug> fmt::Debug for RCellPtr<T, M>
 pub struct Ref<T: ?Sized + Repr, M: BitMask = u32>(RCellPtr<T, M>, PhantomData<RCell<T::Store, M>>);
 
 impl<T: ?Sized + Repr, M: BitMask> Ref<T, M> {
-    #[inline]
-    pub fn get(&self) -> Ref<T, M> { self.0.get_ref().unwrap() }
-
-    #[inline]
-    pub fn get_strong(&self) -> Strong<T, M> { self.0.get_strong().unwrap() }
-
-    #[inline]
-    pub fn get_weak(&self) -> Weak<T, M> { self.0.get_weak().unwrap() }
-
-    #[inline]
-    pub fn try_get(&self) -> Result<Ref<T, M>, State> { self.0.get_ref() }
-
-    #[inline]
-    pub fn try_get_strong(&self) -> Result<Strong<T, M>, State> { self.0.get_strong() }
-
-    #[inline]
-    pub fn try_get_weak(&self) -> Result<Weak<T, M>, State> { self.0.get_weak() }
+    impl_get_ref!();
+    impl_ref_all!();
 }
 
-impl<M: BitMask> Ref<str, M> {
-    #[inline]
-    pub fn new_str(t: &str) -> Self { RCellPtr::new_str(t).get_ref().unwrap() }
-}
-
-impl<T, M: BitMask> Ref<T, M> {
-    #[inline]
-    pub fn new(t: T) -> Self { RCellPtr::new(t).get_ref().unwrap() }
-}
-
-impl<T, M: BitMask> Ref<[T], M> {
-    #[inline]
-    pub fn new_slice<I: ExactSizeIterator<Item=T>>(t: I) -> Self { RCellPtr::new_slice(t).get_ref().unwrap() }
-}
-
-impl<T: Default, M: BitMask> Default for Ref<T, M> {
-    #[inline]
-    fn default() -> Self { Ref::new(Default::default()) }
-}
-
-impl<T, M: BitMask> From<T> for Ref<T, M> {
-    #[inline]
-    fn from(t: T) -> Self { Ref::new(t) }
-}
-
+new_ref!(Ref, RCellPtr, get_ref, BitMask);
 
 impl<T: ?Sized + Repr, M: BitMask> Drop for Ref<T, M> {
     fn drop(&mut self) {
@@ -805,22 +761,10 @@ impl<T: ?Sized + Repr, M: BitMask> Clone for Ref<T, M> {
 #[derive(Debug)]
 pub struct RefMut<T: ?Sized + Repr, M: BitMask = u32>(RCellPtr<T, M>, PhantomData<RCell<T::Store, M>>);
 
-impl<T, M: BitMask> RefMut<T, M> {
-    #[inline]
-    pub fn new(t: T) -> Self { RCellPtr::new(t).get_refmut().unwrap() }
-}
-
-impl<T, M: BitMask> RefMut<[T], M> {
-    #[inline]
-    pub fn new_slice<I: ExactSizeIterator<Item=T>>(t: I) -> Self { RCellPtr::new_slice(t).get_refmut().unwrap() }
-}
+new_ref!(RefMut, RCellPtr, get_refmut, BitMask);
 
 impl<T: ?Sized + Repr, M: BitMask> RefMut<T, M> {
-    #[inline]
-    pub fn get_strong(&self) -> Strong<T, M> { self.0.get_strong().unwrap() }
-
-    #[inline]
-    pub fn get_weak(&self) -> Weak<T, M> { self.0.get_weak().unwrap() }
+    impl_ref_all!();
 }
 
 impl<T: ?Sized + Repr, M: BitMask> Drop for RefMut<T, M> {
@@ -901,51 +845,12 @@ impl<T: ?Sized + Repr + Ord, M: BitMask> Ord for RefMut<T, M> {
 #[derive(Debug)]
 pub struct Strong<T: ?Sized + Repr, M: BitMask = u32>(RCellPtr<T, M>, PhantomData<RCell<T::Store, M>>);
 
-impl<T, M: BitMask> Strong<T, M> {
-    #[inline]
-    pub fn new(t: T) -> Self { RCellPtr::new(t).get_strong().unwrap() }
-}
-
-impl<M: BitMask> Strong<str, M> {
-    #[inline]
-    pub fn new_str(t: &str) -> Self { RCellPtr::new_str(t).get_strong().unwrap() }
-}
-
-impl<T, M: BitMask> Strong<[T], M> {
-    #[inline]
-    pub fn new_slice<I: ExactSizeIterator<Item=T>>(t: I) -> Self { RCellPtr::new_slice(t).get_strong().unwrap() }
-}
+new_ref!(Strong, RCellPtr, get_strong, BitMask);
 
 impl<T: ?Sized + Repr, M: BitMask> Strong<T, M> {
-    #[inline]
-    pub fn state(&self) -> State { self.0.state() }
-
-    #[inline]
-    pub fn get(&self) -> Ref<T, M> { self.0.get_ref().unwrap() }
-
-    #[inline]
-    pub fn get_mut(&self) -> RefMut<T, M> { self.0.get_refmut().unwrap() }
-
-    #[inline]
-    pub fn get_strong(&self) -> Strong<T, M> { self.0.get_strong().unwrap() }
-
-    #[inline]
-    pub fn get_weak(&self) -> Weak<T, M> { self.0.get_weak().unwrap() }
-
-    #[inline]
-    pub fn try_get(&self) -> Result<Ref<T, M>, State> { self.0.get_ref() }
-
-    #[inline]
-    pub fn try_get_mut(&self) -> Result<RefMut<T, M>, State> { self.0.get_refmut() }
-
-    #[inline]
-    pub fn try_get_strong(&self) -> Result<Strong<T, M>, State> { self.0.get_strong() }
-
-    #[inline]
-    pub fn try_get_weak(&self) -> Result<Weak<T, M>, State> { self.0.get_weak() }
-
-    #[inline]
-    pub fn unpoison(&self) -> Result<(), State> { self.0.get().unpoison() }
+    impl_get_refmut!();
+    impl_get_ref!();
+    impl_ref_all!();
 }
 
 impl<T: ?Sized + Repr, M: BitMask> Drop for Strong<T, M> {
@@ -971,35 +876,9 @@ impl<T: ?Sized + Repr, M: BitMask> Clone for Strong<T, M> {
 pub struct Weak<T: ?Sized + Repr, M: BitMask = u32>(RCellPtr<T, M>);
 
 impl<T: ?Sized + Repr, M: BitMask> Weak<T, M> {
-    #[inline]
-    pub fn state(&self) -> State { self.0.state() }
-
-    #[inline]
-    pub fn get(&self) -> Ref<T, M> { self.0.get_ref().unwrap() }
-
-    #[inline]
-    pub fn get_mut(&self) -> RefMut<T, M> { self.0.get_refmut().unwrap() }
-
-    #[inline]
-    pub fn get_strong(&self) -> Strong<T, M> { self.0.get_strong().unwrap() }
-
-    #[inline]
-    pub fn get_weak(&self) -> Weak<T, M> { self.0.get_weak().unwrap() }
-
-    #[inline]
-    pub fn try_get(&self) -> Result<Ref<T, M>, State> { self.0.get_ref() }
-
-    #[inline]
-    pub fn try_get_mut(&self) -> Result<RefMut<T, M>, State> { self.0.get_refmut() }
-
-    #[inline]
-    pub fn try_get_strong(&self) -> Result<Strong<T, M>, State> { self.0.get_strong() }
-
-    #[inline]
-    pub fn try_get_weak(&self) -> Result<Weak<T, M>, State> { self.0.get_weak() }
-
-    #[inline]
-    pub fn unpoison(&self) -> Result<(), State> { self.0.get().unpoison() }
+    impl_get_refmut!();
+    impl_get_ref!();
+    impl_ref_all!();
 }
 
 impl<T: ?Sized + Repr, M: BitMask> Drop for Weak<T, M> {

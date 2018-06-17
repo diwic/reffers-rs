@@ -14,6 +14,9 @@
 
 use std::ops::{Deref, DerefMut};
 
+#[macro_use]
+mod rc_macros;
+
 pub mod aref;
 pub mod rmba;
 pub mod rc;

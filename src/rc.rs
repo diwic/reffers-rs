@@ -115,7 +115,8 @@ const IDX_TO_STATE: [State; 3] = [State::NotEnoughRefs, State::NotEnoughStrongs,
 /// ```
 pub unsafe trait BitMask: Copy + Default {
     /// The internal primitive type, e g u8, u16, u32 or u64.
-    // type Num: Copy + Default;
+    type Num: Copy + Default + ops::BitAnd<Output=Self::Num> + cmp::PartialEq +
+       ops::Add<Output=Self::Num> + ops::Sub<Output=Self::Num> + Into<u64>;
 
     /// A triple of bits reserved for Ref, Strong and Weak -
     /// in that order. The first two (least significant) bits are reserved for state.
@@ -128,13 +129,19 @@ pub unsafe trait BitMask: Copy + Default {
     /// Must evaluate to: [2, 2 + BITS[0], 2 + BITS[0] + BITS[1]];
     const SHIFTS: [u8; 3];
 
+    const SHIFTED: [Self::Num; 3];
+
     /// Transforms bits into masks.
-    const MASKS: [u64; 3];
+    const MASKS: [Self::Num; 3];
 
     /// Sets the bitmask to the specified value.
     fn set(&mut self, u64);
     /// Gets the bitmask as an u64.
     fn get(&self) -> u64;
+
+    fn get_inner(&self) -> Self::Num;
+
+    fn set_inner(&mut self, v: Self::Num);
 
 
     /// Changes reference count of a certain type,
@@ -143,14 +150,20 @@ pub unsafe trait BitMask: Copy + Default {
     /// You probably don't want to implement this; implement the "bits" function instead.
     #[inline]
     fn inc(&mut self, idx: usize) -> Result<(), State> {
-        let shift = Self::SHIFTS[idx];
         let mmask = Self::MASKS[idx];
-        let morig = self.get();
-        let m = (morig & mmask) + (1 << shift);
-        if (m & (!mmask)) != 0 { return Err(IDX_TO_STATE[idx]); }
-        let m = m | (morig & (!mmask));
-        self.set(m);
+        let morig: Self::Num = self.get_inner();
+        if (mmask & morig) == mmask { return Err(IDX_TO_STATE[idx]); }
+        let m = morig + Self::SHIFTED[idx];
+        self.set_inner(m);
         Ok(())
+    }
+
+    #[inline]
+    fn is_zero(&self, idx: usize) -> bool {
+        let mmask = Self::MASKS[idx];
+        let morig: Self::Num = self.get_inner();
+        let zero: Self::Num = unsafe { mem::zeroed() };
+        zero == morig & mmask        
     }
 
     /// Decrements reference count of a certain type,
@@ -159,13 +172,10 @@ pub unsafe trait BitMask: Copy + Default {
     /// You probably don't want to implement this; implement the "bits" function instead.
     #[inline]
     fn dec(&mut self, idx: usize) {
-        let shift = Self::SHIFTS[idx];
-        let mmask = Self::MASKS[idx];
-        let morig = self.get();
-        let m = (morig & mmask) - (1 << shift);
-        if (m & (!mmask)) != 0 { panic!("Internal refcount error of type {}", idx); }
-        let m = m | (morig & (!mmask));
-        self.set(m);
+        let morig: Self::Num = self.get_inner();
+        debug_assert!(!self.is_zero(idx));
+        let m = morig - Self::SHIFTED[idx];
+        self.set_inner(m);
     }
 
 }
@@ -179,15 +189,19 @@ macro_rules! rc_bit_mask {
 
         const SHIFTS: [u8; 3] = [2, 2+($r), 2+($r)+($s)];
 
-        const MASKS: [u64; 3] = [
-            ((1u64 << Self::BITS[0]) - 1) << Self::SHIFTS[0],
-            ((1u64 << Self::BITS[1]) - 1) << Self::SHIFTS[1],
-            ((1u64 << Self::BITS[2]) - 1) << Self::SHIFTS[2],
+        const SHIFTED: [$t; 3] = [1 << 2, 1 << (2 + $r), 1 << (2 + $r + $s)];
+
+        const MASKS: [$t; 3] = [
+            ((1 << Self::BITS[0]) - 1) << Self::SHIFTS[0],
+            ((1 << Self::BITS[1]) - 1) << Self::SHIFTS[1],
+            ((1 << Self::BITS[2]) - 1) << Self::SHIFTS[2],
         ];
     };
 
     (primitive, $t: ty, $r:expr, $s: expr, $w: expr) => {
         unsafe impl $crate::rc::BitMask for $t {
+            type Num = $t;
+
             rc_bit_mask!(masks, $t, $r, $s, $w);
 
             #[inline]
@@ -195,18 +209,32 @@ macro_rules! rc_bit_mask {
 
             #[inline]
             fn get(&self) -> u64 { *self as u64 }
+
+            #[inline]
+            fn get_inner(&self) -> Self::Num { *self }
+
+            #[inline]
+            fn set_inner(&mut self, v: Self::Num) { *self = v }
         }
     };
 
     ($t: ty, $t_int: ty, $r:expr, $s: expr, $w: expr) => {
         unsafe impl $crate::rc::BitMask for $t {
-            rc_bit_mask!(masks, $t, $r, $s, $w);
+            type Num = $t_int;
+
+            rc_bit_mask!(masks, $t_int, $r, $s, $w);
 
             #[inline]
             fn set(&mut self, u: u64) { self.0 = u as $t_int }
 
             #[inline]
             fn get(&self) -> u64 { self.0 as u64 }
+
+            #[inline]
+            fn get_inner(&self) -> Self::Num { self.0 }
+
+            #[inline]
+            fn set_inner(&mut self, v: Self::Num) { self.0 = v }
         }
     };
 }
@@ -224,9 +252,12 @@ rc_bit_mask!(primitive, u32, 10, 10, 10);
 
 #[test]
 fn bitmask() {
-    assert_eq!(u32::MASKS[BM_REF],    0x00000ffc);
-    assert_eq!(u32::MASKS[BM_STRONG], 0x003ff000);
-    assert_eq!(u32::MASKS[BM_WEAK],   0xffc00000);
+    assert_eq!(u32::SHIFTED[BM_REF],    0x00000004);
+    assert_eq!(u32::MASKS[BM_REF],      0x00000ffc);
+    assert_eq!(u32::SHIFTED[BM_STRONG], 0x00001000);
+    assert_eq!(u32::MASKS[BM_STRONG],   0x003ff000);
+    assert_eq!(u32::SHIFTED[BM_WEAK],   0x00400000);
+    assert_eq!(u32::MASKS[BM_WEAK],     0xffc00000);
     let mut m = 0u32;
     m.inc(BM_WEAK).unwrap();
     assert_eq!(m, 0x00400000);
@@ -303,11 +334,10 @@ impl<T, M: BitMask> RCell<T, M> {
 
 impl<T: ?Sized, M: BitMask> RCell<T, M> {
     pub fn state(&self) -> State {
-        let m = self.mask.get().get();
-        match m & 3 {
+        let m = self.mask.get();
+        match m.get() & 3 {
             0 => {
-                let mr = M::MASKS[BM_REF];
-                if (m & mr) != 0 { State::Borrowed } else { State::Available }
+                if m.is_zero(BM_REF) { State::Available } else { State::Borrowed }
             },
             1 => State::BorrowedMut,
             2 => State::Poisoned,
@@ -318,7 +348,7 @@ impl<T: ?Sized, M: BitMask> RCell<T, M> {
 
     #[inline]
     fn set_state(&self, s: State) { 
-        debug_assert!(s != State::Borrowed);
+        debug_assert!(s as u64 <= 3);
         let mut m2 = self.mask.get(); 
         let mut m = m2.get();
         m &= !3;
@@ -549,7 +579,7 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
     fn check_drop(&mut self) {
         let m = self.get().mask.get().get();
         if m & 3 == 1 { return; } // Existing RefMut
-        if (m & (M::MASKS[BM_REF] + M::MASKS[BM_STRONG])) != 0 { return; } // Existing Ref or Strong
+        if (m & (M::MASKS[BM_REF] + M::MASKS[BM_STRONG]).into()) != 0 { return; } // Existing Ref or Strong
         self.do_drop();
     }
 
@@ -566,9 +596,10 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
                 unsafe { ptr::drop_in_place(T::convert(c.inner.get())) };
                 debug_assert_eq!(c.state(), State::Dropped);
                 self.dec(if used_ref { BM_REF } else { BM_STRONG });
-                debug_assert_eq!(c.mask.get().get() & (M::MASKS[BM_REF] + M::MASKS[BM_STRONG]), 0);
+                debug_assert!(c.mask.get().is_zero(BM_REF));
+                debug_assert!(c.mask.get().is_zero(BM_STRONG));
             }
-            if c.mask.get().get() & M::MASKS[BM_WEAK] != 0 { return };
+            if !c.mask.get().is_zero(BM_WEAK) { return };
         }
         unsafe { T::deallocate_mem(self.0.as_mut()) };
     }

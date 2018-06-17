@@ -114,9 +114,9 @@ const IDX_TO_STATE: [State; 3] = [State::NotEnoughRefs, State::NotEnoughStrongs,
 /// # fn main() {}
 /// ```
 pub unsafe trait BitMask: Copy + Default {
-    /// The internal primitive type, e g u8, u16, u32 or u64.
+    /// The internal primitive type, usually u8, u16, u32 or u64.
     type Num: Copy + Default + ops::BitAnd<Output=Self::Num> + cmp::PartialEq +
-       ops::Add<Output=Self::Num> + ops::Sub<Output=Self::Num> + Into<u64>;
+       ops::Add<Output=Self::Num> + ops::Sub<Output=Self::Num> + From<u8> + ops::Not<Output=Self::Num>;
 
     /// A triple of bits reserved for Ref, Strong and Weak -
     /// in that order. The first two (least significant) bits are reserved for state.
@@ -127,21 +127,22 @@ pub unsafe trait BitMask: Copy + Default {
     /// A triple of shifts.
     ///
     /// Must evaluate to: [2, 2 + BITS[0], 2 + BITS[0] + BITS[1]];
-    const SHIFTS: [u8; 3];
+    // const SHIFTS: [u8; 3];
+
+    const THREE: Self::Num;
 
     const SHIFTED: [Self::Num; 3];
 
     /// Transforms bits into masks.
     const MASKS: [Self::Num; 3];
 
-    /// Sets the bitmask to the specified value.
-    fn set(&mut self, u64);
-    /// Gets the bitmask as an u64.
-    fn get(&self) -> u64;
-
+    /// Gets the bitmask
     fn get_inner(&self) -> Self::Num;
 
+    /// Sets the bitmask to the specified value.
     fn set_inner(&mut self, v: Self::Num);
+
+    fn get_state(&self) -> u8;
 
 
     /// Changes reference count of a certain type,
@@ -187,14 +188,16 @@ macro_rules! rc_bit_mask {
 
         const BITS: [u8; 3] = [$r, $s, $w];
 
-        const SHIFTS: [u8; 3] = [2, 2+($r), 2+($r)+($s)];
+        const THREE: Self::Num = 3;
+
+        // const SHIFTS: [u8; 3] = [2, 2+($r), 2+($r)+($s)];
 
         const SHIFTED: [$t; 3] = [1 << 2, 1 << (2 + $r), 1 << (2 + $r + $s)];
 
         const MASKS: [$t; 3] = [
-            ((1 << Self::BITS[0]) - 1) << Self::SHIFTS[0],
-            ((1 << Self::BITS[1]) - 1) << Self::SHIFTS[1],
-            ((1 << Self::BITS[2]) - 1) << Self::SHIFTS[2],
+            Self::SHIFTED[0] * ((1 << $r) - 1),
+            Self::SHIFTED[1] * ((1 << $s) - 1),
+            Self::SHIFTED[2] * ((1 << $w) - 1),
         ];
     };
 
@@ -205,10 +208,12 @@ macro_rules! rc_bit_mask {
             rc_bit_mask!(masks, $t, $r, $s, $w);
 
             #[inline]
-            fn set(&mut self, u: u64) { *self = u as $t }
+            // fn set(&mut self, u: u64) { *self = u as $t }
 
             #[inline]
-            fn get(&self) -> u64 { *self as u64 }
+            fn get_state(&self) -> u8 { (*self & 3) as u8 }
+
+            // fn get(&self) -> u64 { *self as u64 }
 
             #[inline]
             fn get_inner(&self) -> Self::Num { *self }
@@ -225,10 +230,11 @@ macro_rules! rc_bit_mask {
             rc_bit_mask!(masks, $t_int, $r, $s, $w);
 
             #[inline]
-            fn set(&mut self, u: u64) { self.0 = u as $t_int }
+            // fn set(&mut self, u: u64) { self.0 = u as $t_int }
 
             #[inline]
-            fn get(&self) -> u64 { self.0 as u64 }
+            fn get_state(&self) -> u8 { (self.0 & 3) as u8 }
+            // fn get(&self) -> u64 { self.0 as u64 }
 
             #[inline]
             fn get_inner(&self) -> Self::Num { self.0 }
@@ -250,6 +256,14 @@ rc_bit_mask!(primitive, u16, 5, 4, 5);
 /// Using u32 will allow for a maximum of 1024 Ref, 1024 Strong and 1024 Weak.
 rc_bit_mask!(primitive, u32, 10, 10, 10);
 
+/// Using u64 will allow for a maximum of 2097152 Ref, 1048576 Strong and 2097152 Weak.
+rc_bit_mask!(primitive, u64, 21, 20, 21);
+
+/// Using u128 will give you 42 bits of Ref, Strong and Weak.
+rc_bit_mask!(primitive, u128, 42, 42, 42);
+
+
+
 #[test]
 fn bitmask() {
     assert_eq!(u32::SHIFTED[BM_REF],    0x00000004);
@@ -258,15 +272,17 @@ fn bitmask() {
     assert_eq!(u32::MASKS[BM_STRONG],   0x003ff000);
     assert_eq!(u32::SHIFTED[BM_WEAK],   0x00400000);
     assert_eq!(u32::MASKS[BM_WEAK],     0xffc00000);
+    assert_eq!(u32::THREE, 3);
     let mut m = 0u32;
     m.inc(BM_WEAK).unwrap();
     assert_eq!(m, 0x00400000);
     m = 0xffc00000;
     assert!(m.inc(BM_WEAK).is_err());
+
+    assert_eq!(u64::MASKS[BM_WEAK], 0xffff_f800_0000_0000);
+    assert_eq!(u128::MASKS[BM_WEAK], 0xffff_ffff_ffc0_0000_0000_0000_0000_0000);
 }
 
-/// Using u64 will allow for a maximum of 2097152 Ref, 1048576 Strong and 2097152 Weak.
-rc_bit_mask!(primitive, u64, 21, 20, 21);
 
 /// Current state of the Rc.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -334,10 +350,11 @@ impl<T, M: BitMask> RCell<T, M> {
 
 impl<T: ?Sized, M: BitMask> RCell<T, M> {
     pub fn state(&self) -> State {
-        let m = self.mask.get();
-        match m.get() & 3 {
+        let m2 = self.mask.get();
+        let m = m2.get_state();
+        match m {
             0 => {
-                if m.is_zero(BM_REF) { State::Available } else { State::Borrowed }
+                if m2.is_zero(BM_REF) { State::Available } else { State::Borrowed }
             },
             1 => State::BorrowedMut,
             2 => State::Poisoned,
@@ -347,13 +364,14 @@ impl<T: ?Sized, M: BitMask> RCell<T, M> {
     }
 
     #[inline]
-    fn set_state(&self, s: State) { 
-        debug_assert!(s as u64 <= 3);
+    fn set_state(&self, s: State) {
+        let s = s as u8;
+        debug_assert!(s <= 3);
         let mut m2 = self.mask.get(); 
-        let mut m = m2.get();
-        m &= !3;
-        m += s as u64;
-        m2.set(m);
+        let mut m = m2.get_inner();
+        m = m & (!M::THREE);
+        m = m + s.into();
+        m2.set_inner(m);
         self.mask.set(m2);
     }
 
@@ -577,9 +595,10 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
 
     #[inline]
     fn check_drop(&mut self) {
-        let m = self.get().mask.get().get();
-        if m & 3 == 1 { return; } // Existing RefMut
-        if (m & (M::MASKS[BM_REF] + M::MASKS[BM_STRONG]).into()) != 0 { return; } // Existing Ref or Strong
+        let m = self.get().mask.get();
+        if m.get_state() == 1 { return; } // Existing RefMut
+        if !m.is_zero(BM_REF) { return; } // Existing Ref
+        if !m.is_zero(BM_STRONG) { return; } // Existing Strong
         self.do_drop();
     }
 

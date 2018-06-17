@@ -23,27 +23,27 @@ pub use aref::ARefs as ARefs;
 pub use aref::ARefss as ARefss;
 pub use rmba::RMBA as RMBA;
 
-/// Typedefs for an rc with 1 byte of overhead.
+/// Type aliases for an rc with 1 byte of overhead.
 pub mod rc1 {
-    pub type RCell<T> = ::rc::Ref<T, u8>;
+    pub type RCell<T> = ::rc::RCell<T, u8>;
     pub type Ref<T> = ::rc::Ref<T, u8>;
     pub type RefMut<T> = ::rc::RefMut<T, u8>;
     pub type Strong<T> = ::rc::Strong<T, u8>;
     pub type Weak<T> = ::rc::Weak<T, u8>;
 }
 
-/// Typedefs for an rc with 2 bytes of overhead.
+/// Type aliases for an rc with 2 bytes of overhead.
 pub mod rc2 {
-    pub type RCell<T> = ::rc::Ref<T, u16>;
+    pub type RCell<T> = ::rc::RCell<T, u16>;
     pub type Ref<T> = ::rc::Ref<T, u16>;
     pub type RefMut<T> = ::rc::RefMut<T, u16>;
     pub type Strong<T> = ::rc::Strong<T, u16>;
     pub type Weak<T> = ::rc::Weak<T, u16>;
 }
 
-/// Typedefs for an rc with 4 bytes of overhead.
+/// Type aliases for an rc with 4 bytes of overhead.
 pub mod rc4 {
-    pub type RCell<T> = ::rc::Ref<T, u32>;
+    pub type RCell<T> = ::rc::RCell<T, u32>;
     pub type Ref<T> = ::rc::Ref<T, u32>;
     pub type RefMut<T> = ::rc::RefMut<T, u32>;
     pub type Strong<T> = ::rc::Strong<T, u32>;
@@ -52,11 +52,20 @@ pub mod rc4 {
 
 /// Typedefs for an rc with 8 bytes of overhead.
 pub mod rc8 {
-    pub type RCell<T> = ::rc::Ref<T, u64>;
+    pub type RCell<T> = ::rc::RCell<T, u64>;
     pub type Ref<T> = ::rc::Ref<T, u64>;
     pub type RefMut<T> = ::rc::RefMut<T, u64>;
     pub type Strong<T> = ::rc::Strong<T, u64>;
     pub type Weak<T> = ::rc::Weak<T, u64>;
+}
+
+/// Typedefs for an rc with 16 bytes of overhead.
+pub mod rc16 {
+    pub type RCell<T> = ::rc::RCell<T, u128>;
+    pub type Ref<T> = ::rc::Ref<T, u128>;
+    pub type RefMut<T> = ::rc::RefMut<T, u128>;
+    pub type Strong<T> = ::rc::Strong<T, u128>;
+    pub type Weak<T> = ::rc::Weak<T, u128>;
 }
 
 

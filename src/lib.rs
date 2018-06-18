@@ -19,6 +19,7 @@ mod rc_macros;
 
 pub mod aref;
 pub mod rmba;
+mod rc_bitmask;
 pub mod rc;
 
 pub use aref::ARef as ARef;

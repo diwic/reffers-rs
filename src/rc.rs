@@ -83,82 +83,9 @@ use std::{fmt, mem, ptr, error, ops, borrow, convert, slice, hash, cmp};
 use std::ptr::NonNull;
 use std::marker::PhantomData;
 
-/// The first returned value from BitMask::bits is number of bits for Ref. 
-pub const BM_REF: usize = 0;
-/// The second returned value from BitMask::bits is number of bits for Strong. 
-pub const BM_STRONG: usize = 1;
-/// The third returned value from BitMask::bits is number of bits for Weak. 
-pub const BM_WEAK: usize = 2;
+use rc_bitmask::*;
 
-const IDX_TO_STATE: [State; 3] = [State::NotEnoughRefs, State::NotEnoughStrongs, State::NotEnoughWeaks];
-
-pub unsafe trait BitMask: Copy + Default {
-    /// The internal primitive type, usually u8, u16, u32 or u64.
-    type Num: Copy + ops::BitAnd<Output=Self::Num> + cmp::PartialEq +
-       ops::Add<Output=Self::Num> + ops::Sub<Output=Self::Num> + From<u8> + ops::Not<Output=Self::Num>;
-
-    /// A triple of bits reserved for Ref, Strong and Weak -
-    /// in that order. The first two (least significant) bits are reserved for state.
-    ///
-    /// Bits may not overflow. You need at least one bit that's either Ref or Strong.
-    const BITS: [u8; 3];
-
-    /// A triple of shifts.
-    ///
-    /// Must evaluate to: [2, 2 + BITS[0], 2 + BITS[0] + BITS[1]];
-    // const SHIFTS: [u8; 3];
-
-    const THREE: Self::Num;
-
-    const SHIFTED: [Self::Num; 3];
-
-    /// Transforms bits into masks.
-    const MASKS: [Self::Num; 3];
-
-    /// Gets the bitmask
-    fn get_inner(&self) -> Self::Num;
-
-    /// Sets the bitmask to the specified value.
-    fn set_inner(&mut self, v: Self::Num);
-
-    fn get_state(&self) -> u8;
-
-
-    /// Changes reference count of a certain type,
-    /// returns error on overflow.
-    ///
-    /// You probably don't want to implement this; implement the "bits" function instead.
-    #[inline]
-    fn inc(&mut self, idx: usize) -> Result<(), State> {
-        let mmask = Self::MASKS[idx];
-        let morig: Self::Num = self.get_inner();
-        if (mmask & morig) == mmask { return Err(IDX_TO_STATE[idx]); }
-        let m = morig + Self::SHIFTED[idx];
-        self.set_inner(m);
-        Ok(())
-    }
-
-    #[inline]
-    fn is_zero(&self, idx: usize) -> bool {
-        let mmask = Self::MASKS[idx];
-        let morig: Self::Num = self.get_inner();
-        let zero: Self::Num = unsafe { mem::zeroed() };
-        zero == morig & mmask        
-    }
-
-    /// Decrements reference count of a certain type,
-    /// panics on underflow.
-    ///
-    /// You probably don't want to implement this; implement the "bits" function instead.
-    #[inline]
-    fn dec(&mut self, idx: usize) {
-        let morig: Self::Num = self.get_inner();
-        debug_assert!(!self.is_zero(idx));
-        let m = morig - Self::SHIFTED[idx];
-        self.set_inner(m);
-    }
-
-}
+pub use rc_bitmask::BitMask;
 
 
 /// If you need your own rc with custom overhead, you can invoke this macro for your own type
@@ -189,19 +116,13 @@ pub unsafe trait BitMask: Copy + Default {
 #[macro_export]
 macro_rules! rc_bit_mask {
     (masks, $t: ty, $r:expr, $s: expr, $w: expr) => {
+        const SHIFTED: [$t; 4] = [1 << 2, 1 << (2 + $r), 1 << (2 + $r + $s), 1];
 
-        const BITS: [u8; 3] = [$r, $s, $w];
-
-        const THREE: Self::Num = 3;
-
-        // const SHIFTS: [u8; 3] = [2, 2+($r), 2+($r)+($s)];
-
-        const SHIFTED: [$t; 3] = [1 << 2, 1 << (2 + $r), 1 << (2 + $r + $s)];
-
-        const MASKS: [$t; 3] = [
+        const MASKS: [$t; 4] = [
             Self::SHIFTED[0] * ((1 << $r) - 1),
             Self::SHIFTED[1] * ((1 << $s) - 1),
             Self::SHIFTED[2] * ((1 << $w) - 1),
+            3,
         ];
     };
 
@@ -213,6 +134,9 @@ macro_rules! rc_bit_mask {
 
             #[inline]
             fn get_state(&self) -> u8 { (*self & 3) as u8 }
+
+            #[inline]
+            fn set_state(&mut self, v: u8) { *self = (*self & !3) | ((v & 3) as $t); }
 
             #[inline]
             fn get_inner(&self) -> Self::Num { *self }
@@ -230,6 +154,9 @@ macro_rules! rc_bit_mask {
 
             #[inline]
             fn get_state(&self) -> u8 { (self.0 & 3) as u8 }
+
+            #[inline]
+            fn set_state(&mut self, v: u8) { self.0 = (self.0 & !3) | ((v & 3) as $t_int); }
 
             #[inline]
             fn get_inner(&self) -> Self::Num { self.0 }
@@ -270,7 +197,6 @@ fn bitmask() {
     assert_eq!(u32::MASKS[BM_STRONG],   0x003ff000);
     assert_eq!(u32::SHIFTED[BM_WEAK],   0x00400000);
     assert_eq!(u32::MASKS[BM_WEAK],     0xffc00000);
-    assert_eq!(u32::THREE, 3);
     let mut m = 0u32;
     m.inc(BM_WEAK).unwrap();
     assert_eq!(m, 0x00400000);
@@ -302,6 +228,21 @@ pub enum State {
     NotEnoughStrongs = 6,
     /// Returned as error from try_get_weak in case no more Weak references are available
     NotEnoughWeaks = 7,
+}
+
+impl<M: BitMask> From<M> for State {
+    fn from(m2: M) -> State {
+        let m = m2.get_state();
+        match m {
+            0 => {
+                if m2.is_zero(BM_REF) { State::Available } else { State::Borrowed }
+            },
+            1 => State::BorrowedMut,
+            2 => State::Poisoned,
+            3 => State::Dropped,
+            _ => unreachable!(),
+        }
+    }
 }
 
 impl fmt::Display for State {
@@ -365,11 +306,8 @@ impl<T: ?Sized, M: BitMask> RCell<T, M> {
     fn set_state(&self, s: State) {
         let s = s as u8;
         debug_assert!(s <= 3);
-        let mut m2 = self.mask.get(); 
-        let mut m = m2.get_inner();
-        m = m & (!M::THREE);
-        m = m + s.into();
-        m2.set_inner(m);
+        let mut m2 = self.mask.get();
+        m2.set_state(s); 
         self.mask.set(m2);
     }
 

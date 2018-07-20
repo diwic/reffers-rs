@@ -88,126 +88,6 @@ use rc_bitmask::*;
 pub use rc_bitmask::BitMask;
 
 
-/// If you need your own rc with custom overhead, you can invoke this macro for your own type
-/// (which is normally a newtype around an integer).
-///
-/// # Example
-/// ```
-/// #[macro_use]
-/// extern crate reffers;
-/// use reffers::rc::Ref;
-///
-/// #[derive(Debug, Copy, Clone, Default)]
-/// struct ManyWeak(u32);
-///
-/// // We want 16 Refs, no Strongs, and as many Weaks as possible
-/// // for the 32 bits of overhead that we are willing to accept.
-/// // In total, this must add up to max 30 bits (32 bits minus 2 for status).
-/// rc_bit_mask!(ManyWeak, u32, 4, 0, 26);
-///
-/// fn main() {
-///     let r: Ref<str, ManyWeak> = Ref::new_str("Hi!");
-///     // We can create weaks
-///     let w = r.get_weak();
-///     // ...but no strongs
-///     assert!(w.try_get_strong().is_err());
-/// }
-/// ```
-#[macro_export]
-macro_rules! rc_bit_mask {
-    (masks, $t: ty, $r:expr, $s: expr, $w: expr) => {
-        const SHIFTED: [$t; 4] = [1 << 2, 1 << (2 + $r), 1 << (2 + $r + $s), 1];
-
-        const MASKS: [$t; 4] = [
-            Self::SHIFTED[0] * ((1 << $r) - 1),
-            Self::SHIFTED[1] * ((1 << $s) - 1),
-            Self::SHIFTED[2] * ((1 << $w) - 1),
-            3,
-        ];
-    };
-
-    (primitive, $t: ty, $r:expr, $s: expr, $w: expr) => {
-        unsafe impl $crate::rc::BitMask for $t {
-            type Num = $t;
-
-            rc_bit_mask!(masks, $t, $r, $s, $w);
-
-            #[inline]
-            fn get_state(&self) -> u8 { (*self & 3) as u8 }
-
-            #[inline]
-            fn set_state(&mut self, v: u8) { *self = (*self & !3) | ((v & 3) as $t); }
-
-            #[inline]
-            fn get_inner(&self) -> Self::Num { *self }
-
-            #[inline]
-            fn set_inner(&mut self, v: Self::Num) { *self = v }
-        }
-    };
-
-    ($t: ty, $t_int: ty, $r:expr, $s: expr, $w: expr) => {
-        unsafe impl $crate::rc::BitMask for $t {
-            type Num = $t_int;
-
-            rc_bit_mask!(masks, $t_int, $r, $s, $w);
-
-            #[inline]
-            fn get_state(&self) -> u8 { (self.0 & 3) as u8 }
-
-            #[inline]
-            fn set_state(&mut self, v: u8) { self.0 = (self.0 & !3) | ((v & 3) as $t_int); }
-
-            #[inline]
-            fn get_inner(&self) -> Self::Num { self.0 }
-
-            #[inline]
-            fn set_inner(&mut self, v: Self::Num) { self.0 = v }
-        }
-    };
-}
-
-/// Using u8 will allow for a maximum of four Ref, four Strong and four Weak.
-///
-/// That's not much, maybe you want to implement your own wrapper type instead. 
-rc_bit_mask!(primitive, u8, 2, 2, 2);
-
-/// Using u16 will allow for a maximum of 32 Ref, 16 Strong and 32 Weak.
-rc_bit_mask!(primitive, u16, 5, 4, 5);
-
-/// Using u32 will allow for a maximum of 1024 Ref, 1024 Strong and 1024 Weak.
-rc_bit_mask!(primitive, u32, 10, 10, 10);
-
-/// Usize defaults to same as u32.
-rc_bit_mask!(primitive, usize, 10, 10, 10);
-
-/// Using u64 will allow for a maximum of 2097152 Ref, 1048576 Strong and 2097152 Weak.
-rc_bit_mask!(primitive, u64, 21, 20, 21);
-
-/// Using u128 will give you 42 bits of Ref, Strong and Weak.
-rc_bit_mask!(primitive, u128, 42, 42, 42);
-
-
-
-#[test]
-fn bitmask() {
-    assert_eq!(u32::SHIFTED[BM_REF],    0x00000004);
-    assert_eq!(u32::MASKS[BM_REF],      0x00000ffc);
-    assert_eq!(u32::SHIFTED[BM_STRONG], 0x00001000);
-    assert_eq!(u32::MASKS[BM_STRONG],   0x003ff000);
-    assert_eq!(u32::SHIFTED[BM_WEAK],   0x00400000);
-    assert_eq!(u32::MASKS[BM_WEAK],     0xffc00000);
-    let mut m = 0u32;
-    m.inc(BM_WEAK).unwrap();
-    assert_eq!(m, 0x00400000);
-    m = 0xffc00000;
-    assert!(m.inc(BM_WEAK).is_err());
-
-    assert_eq!(u64::MASKS[BM_WEAK], 0xffff_f800_0000_0000);
-    assert_eq!(u128::MASKS[BM_WEAK], 0xffff_ffff_ffc0_0000_0000_0000_0000_0000);
-}
-
-
 /// Current state of the Rc.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum State {
@@ -406,10 +286,11 @@ fn cslice_len_to_capacity<T, M: BitMask>(l: usize) -> usize {
 /// This is an implementation detail. Please don't mess with it.
 ///
 /// It's for abstracting over sized and unsized types.
-#[doc(hidden)]
 pub unsafe trait Repr {
     type Store;
+    #[doc(hidden)]
     fn convert(*mut Self::Store) -> *mut Self;
+    #[doc(hidden)]
     unsafe fn deallocate_mem<M: BitMask>(&mut UnsafeCell<RCell<Self::Store, M>>);
 }
 
@@ -445,8 +326,7 @@ unsafe impl Repr for str {
 }
 
 
-// Note: This would benefit from NonZero/Shared ptr support,
-// as well as CoerceUnsized support 
+// Note: This would benefit from CoerceUnsized support 
 //
 // Note2: I'm not sure the UnsafeCell is needed. But otherwise we'd have to 
 // cast the *const to a *mut instead and using UnsafeCell makes me more sure
@@ -592,6 +472,9 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
         m.dec(idx);
         self.get().mask.set(m);
     }
+
+    #[inline]
+    fn unpoison(&self) -> Result<(), State> { self.get().unpoison() }
 }
 
 

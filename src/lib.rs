@@ -21,6 +21,7 @@ pub mod aref;
 pub mod rmba;
 mod rc_bitmask;
 pub mod rc;
+pub mod arc;
 
 pub use aref::ARef as ARef;
 pub use aref::ARefs as ARefs;

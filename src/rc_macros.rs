@@ -129,8 +129,21 @@ macro_rules! impl_ref_all {
     ///
     /// Poisoning happens when a RefMut is dropped during a panic.
     #[inline]
-    pub fn unpoison(&self) -> Result<(), State> { self.0.get().unpoison() }
+    pub fn unpoison(&self) -> Result<(), State> { self.0.unpoison() }
 
     }
 
+}
+
+macro_rules! impl_arc_all {
+    ($t: ident, $drop_expr: expr) => {
+
+impl<T: ?Sized + Repr, M: BitMask<Num=usize>> Drop for $t<T, M> {
+    #[inline]
+    fn drop(&mut self) {
+        self.0.try_drop($drop_expr);
+    }
+}
+
+    }
 }

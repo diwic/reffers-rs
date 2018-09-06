@@ -39,12 +39,7 @@ RMBA
 
 The RMBA wraps either a `&T`, `&mut T`, `Box<T>` or `Arc<T>` within the size of a single pointer. 
 
-There are two gotchas here: 
-
-  * It will panic if you try to store a struct that's not 32 bit aligned.
-
-  * Drop flags were removed in 1.13-nightly. If you run an earlier version,
-    size might be larger than a single pointer due to the drop flag.
+It will panic if you try to store a struct that's not 32 bit aligned.
 
 Bx, Bxm
 -------

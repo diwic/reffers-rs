@@ -1,9 +1,9 @@
 [package]
 name = "reffers"
-version = "0.4.2"
+version = "0.5.0"
 authors = ["David Henningsson <diwic@ubuntu.com>"]
 license = "Apache-2.0/MIT"
-description = "Smart pointers: ARef, that allows even further owner erasure than OwningRef. Strong is a memory efficient Rc + RefCell in one. RMBA abstracts over a reference/box or Arc. And more!"
+description = "Smart pointers: ARef, that allows even further owner erasure than OwningRef. Strong is a memory efficient Rc + RefCell in one. And more!"
 keywords = ["ref", "cell", "owning_ref"]
 repository = "https://github.com/diwic/reffers-rs"
 documentation = "http://docs.rs/reffers"
@@ -12,3 +12,7 @@ categories = ["rust-patterns", "memory-management"]
 
 [dependencies]
 stable_deref_trait = "1.1"
+
+[badges]
+is-it-maintained-open-issues = { repository = "diwic/reffers-rs" }
+is-it-maintained-issue-resolution = { repository = "diwic/reffers-rs" }

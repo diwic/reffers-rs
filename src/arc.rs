@@ -2,6 +2,20 @@
 //! and the lock is a spinlock (there is no wait-and-sleep functionality). 
 //!
 //! Conceptually similar to rc, but this is a thread-safe version.
+//!
+//! # Example
+//! ```
+//! use std::thread;
+//! use reffers::arcu::Strong;
+//!
+//! let s = Strong::<_>::new(987i32);
+//! let s2 = s.clone();
+//! thread::spawn(move || {
+//!     *s2.get_refmut() = 654i32;
+//! }).join().unwrap();
+//! assert_eq!(*s.get_ref(), 654i32);
+//! ```
+
 
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
@@ -403,5 +417,21 @@ fn arc_slice() {
     s[1] = String::from("ghi");
     assert_eq!(&*s[0], "abc");
     assert_eq!(&*s[1], "ghi");
+}
+
+#[test]
+fn arc_send() {
+    let s = Strong::<_>::new(987i32);
+    let s2 = s.clone();
+    ::std::thread::spawn(move || {
+        *s2.get_refmut() = 654i32;
+    }).join().unwrap();
+    assert_eq!(*s.get_ref(), 654i32);
+
+    let s3 = s.get_ref();    
+    ::std::thread::spawn(move || {
+        assert_eq!(*s3, 654i32);
+    }).join().unwrap();
+
 }
 

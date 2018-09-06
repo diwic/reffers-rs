@@ -274,6 +274,15 @@ pub struct CSlice<T> {
     data: [T; 0],
 }
 
+impl<T> CSlice<T> {
+    pub (crate) fn new(len: usize) -> Self { 
+        assert!(len <= u32::max_value() as usize);
+        CSlice { len: len as u32, data: [] } 
+    }
+    pub (crate) fn get_len(&self) -> usize { self.len as usize }
+    pub (crate) fn data_ptr_mut(&mut self) -> *mut T { self.data.as_mut_ptr() }
+}
+
 fn cslice_len_to_capacity<T, M: BitMask>(l: usize) -> usize {
     let self_size = mem::size_of::<UnsafeCell<RCell<CSlice<T>, M>>>();
     let t_size = mem::size_of::<T>();
@@ -527,6 +536,8 @@ impl<T: ?Sized + Repr, M: BitMask> ops::Deref for Ref<T, M> {
     fn deref(&self) -> &Self::Target { unsafe { &*self.0.value_ptr() }}
 }
 
+unsafe impl<T: ?Sized + Repr, M: BitMask> ::StableDeref for Ref<T, M> {}
+
 impl<T: ?Sized + Repr + fmt::Display, M: BitMask> fmt::Display for Ref<T, M> {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Display::fmt(&**self, f) }
@@ -607,6 +618,8 @@ impl<T: ?Sized + Repr, M: BitMask> ops::Deref for RefMut<T, M> {
     #[inline]
     fn deref(&self) -> &Self::Target { unsafe { &*self.0.value_ptr() }}
 }
+
+unsafe impl<T: ?Sized + Repr, M: BitMask> ::StableDeref for RefMut<T, M> {}
 
 impl<T: ?Sized + Repr, M: BitMask> ops::DerefMut for RefMut<T, M> {
     #[inline]

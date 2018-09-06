@@ -3,6 +3,7 @@ use super::{RMBA, Bx, Bxm, rc};
 use std::{ptr, mem, fmt, hash, cmp, borrow};
 use std::ops::Deref;
 use std::rc::Rc;
+use stable_deref_trait::StableDeref;
 
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::cell::{Ref, RefMut, RefCell};
@@ -15,7 +16,7 @@ type ARefStorage = [usize; 3];
 /// If you implement this for your own types, make sure that
 /// 1) it has a Stable address, i e, the reference stays the same even if the object moves and
 /// 2) it is no bigger than 3 usizes.
-pub unsafe trait AReffic: Deref {}
+pub unsafe trait AReffic: StableDeref {}
 
 /// An unsafe trait that abstracts over things you can borrow or lock, such as
 /// RefCell, RwLock and Mutex.

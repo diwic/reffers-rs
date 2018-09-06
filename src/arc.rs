@@ -10,7 +10,7 @@ use std::{mem, ptr, fmt, ops};
 // error, ops, borrow, convert, slice, hash, cmp};
 use std::ptr::NonNull;
 use std::marker::PhantomData;
-use rc::{BitMask, State};
+use rc::{BitMask, State, CSlice};
 use rc_bitmask::{BitMaskOps, BM_REF, BM_STRONG, BM_WEAK};
 
 #[doc(hidden)]
@@ -49,15 +49,24 @@ unsafe impl<T> Repr for T {
     }
 }
 
+fn cslice_len_to_capacity<T, M: BitMask>(l: usize) -> usize {
+    let self_size = mem::size_of::<ArcBox<CSlice<T>, M>>();
+    let t_size = mem::size_of::<T>();
+    let data_bytes = l * t_size;
+    let r = 1 + ((data_bytes + self_size - 1) / self_size);
+    debug_assert!(self_size * (r - 1) >= l * t_size);
+    r
+}
+
 unsafe impl Repr for str {
-    unsafe fn deallocate_arc<M: BitMask>(_: NonNull<ArcBox<Self::Store, M>>) {
-        unimplemented!();
+    unsafe fn deallocate_arc<M: BitMask>(s: NonNull<ArcBox<Self::Store, M>>) {
+        let _ = Vec::from_raw_parts(s.as_ptr(), 0, cslice_len_to_capacity::<u8, M>((*s.as_ref().inner.get()).get_len()));
     }
 }
 
 unsafe impl<T> Repr for [T] {
-    unsafe fn deallocate_arc<M: BitMask>(_: NonNull<ArcBox<Self::Store, M>>) {
-        unimplemented!();
+    unsafe fn deallocate_arc<M: BitMask>(s: NonNull<ArcBox<Self::Store, M>>) {
+        let _ = Vec::from_raw_parts(s.as_ptr(), 0, cslice_len_to_capacity::<T, M>((*s.as_ref().inner.get()).get_len()));
     }
 }
 
@@ -207,13 +216,30 @@ impl<T, M: BitMask> ArcPtr<T, M> {
 }
 
 impl<M: BitMask> ArcPtr<str, M> {
-    fn new_str(_t: &str) -> Self { unimplemented!() }
+    fn new_str(t: &str) -> Self {
+        let len = t.len();
+        let z = allocate(cslice_len_to_capacity::<u8, M>(len), CSlice::new(len));
+        let mut r: Self = ArcPtr(z, PhantomData);
+        unsafe { ptr::copy_nonoverlapping(t.as_ptr(), (*r.0.as_mut().inner.get()).data_ptr_mut(), len) };
+        r
+    }
 }
 
 impl<T, M: BitMask> ArcPtr<[T], M> {
-    fn new_slice<I: ExactSizeIterator<Item=T>>(_iter: I) -> Self { unimplemented!() }
+    fn new_slice<I: ExactSizeIterator<Item=T>>(iter: I) -> Self {
+        let len = iter.len();
+        let z = allocate(cslice_len_to_capacity::<T, M>(len), CSlice::new(len));
+        let mut r: Self = ArcPtr(z, PhantomData);
+        let p = unsafe { (*r.0.as_mut().inner.get()).data_ptr_mut() };
+        for (idx, item) in iter.enumerate() {
+            unsafe { ptr::write(p.offset(idx as isize), item) }
+        }
+        r
+    }
 }
 
+/// An Arc which has mutable access to the inner value. Only
+/// one RefMut can exist, and cannot coexist with any Ref.
 #[derive(Debug)]
 pub struct RefMut<T: ?Sized + Repr, M: BitMask<Num=usize> = usize>(ArcPtr<T, M>);
 
@@ -223,22 +249,28 @@ impl<T: ?Sized + Repr, M: BitMask<Num=usize>> RefMut<T, M> {
     impl_ref_all!();
 }
 
-impl<T: ?Sized + Repr + Send, M: BitMask<Num=usize>> ops::Deref for RefMut<T, M> {
+impl<T: ?Sized + Repr, M: BitMask<Num=usize>> ops::Deref for RefMut<T, M> {
     type Target = T;
 
     #[inline]
     fn deref(&self) -> &Self::Target { unsafe { &*self.0.value_ptr() }}
 }
 
-impl<T: ?Sized + Repr + Send, M: BitMask<Num=usize>> ops::DerefMut for RefMut<T, M> {
+impl<T: ?Sized + Repr, M: BitMask<Num=usize>> ops::DerefMut for RefMut<T, M> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut *self.0.value_ptr() }}
 }
 
 impl_arc_all!(RefMut, None);
 
+// This is safe because there can only be one RefMut
+unsafe impl<T: Send, M: Send + BitMask<Num=usize>> Sync for RefMut<T, M> {}
 
 
+/// An Rc reference which has immutable access to the inner value.
+///
+/// It's like a strong reference, and a immutably borrowed interior,
+/// in the same struct.
 #[derive(Debug)]
 pub struct Ref<T: ?Sized + Repr, M: BitMask<Num=usize> = usize>(ArcPtr<T, M>);
 
@@ -256,15 +288,22 @@ impl<T: ?Sized + Repr, M: BitMask<Num=usize>> Clone for Ref<T, M> {
     fn clone(&self) -> Self { self.0.get_ref().unwrap() }
 }
 
-impl<T: ?Sized + Repr + Send + Sync, M: BitMask<Num=usize>> ops::Deref for Ref<T, M> {
+impl<T: ?Sized + Repr, M: BitMask<Num=usize>> ops::Deref for Ref<T, M> {
     type Target = T;
 
     #[inline]
     fn deref(&self) -> &Self::Target { unsafe { &*self.0.value_ptr() }}
 }
 
+// This requires T: Sync because there can be many Refs doing deref in parallel
+unsafe impl<T: Send + Sync, M: Send + BitMask<Num=usize>> Sync for Ref<T, M> {}
 
-
+/// A strong reference without access to the inner value.
+///
+/// To get immutable/mutable access, you need to use the 
+/// get_ref/get_refmut functions to create Ref or RefMut references.
+///
+/// The inner value cannot be dropped while Strong, Ref or RefMut references exist.
 #[derive(Debug)]
 pub struct Strong<T: ?Sized + Repr, M: BitMask<Num=usize> = usize>(ArcPtr<T, M>);
 
@@ -283,8 +322,17 @@ impl<T: ?Sized + Repr, M: BitMask<Num=usize>> Clone for Strong<T, M> {
     fn clone(&self) -> Self { self.0.get_strong().unwrap() }
 }
 
+// This is safe because there is no way to access the interior
+unsafe impl<T: Send, M: Send + BitMask<Num=usize>> Sync for Strong<T, M> {}
 
 
+/// A weak reference without access to the inner value.
+///
+/// To get immutable/mutable access, you need to use the 
+/// get_ref/get_refmut functions to create Ref or RefMut references.
+///
+/// If only weak references exist to the inner value,
+/// the inner value will be dropped, and can no longer be accessed.
 #[derive(Debug)]
 pub struct Weak<T: ?Sized + Repr, M: BitMask<Num=usize> = usize>(ArcPtr<T, M>);
 
@@ -301,6 +349,8 @@ impl<T: ?Sized + Repr, M: BitMask<Num=usize>> Weak<T, M> {
     impl_ref_all!();
 }
 
+// This is safe because there is no way to access the interior
+unsafe impl<T: Send, M: Send + BitMask<Num=usize>> Sync for Weak<T, M> {}
 
 
 #[test]
@@ -339,9 +389,28 @@ fn arc_drop() {
     drop(z2);
     assert_eq!(q.get(), 73);
 
-    // let q2 = Cell::new(12i32); 
-    // let z2 = <Strong<_>>::new_slice(vec![Dummy(&q2)].into_iter());
-    // drop(z2);
-    // assert_eq!(q2.get(), 73);
+    let q2 = Cell::new(12i32); 
+    let z2 = <Strong<_>>::new_slice(vec![Dummy(&q2)].into_iter());
+    drop(z2);
+    assert_eq!(q2.get(), 73);
+}
+
+#[test]
+fn arc_str() {
+    let s = Ref::<_>::new_str("Hello world!");
+    assert_eq!(&*s, "Hello world!");
+    let _q = s.get_strong();
+    let r = s.get_weak();
+    drop(s);
+    assert_eq!(&*r.get_refmut(), "Hello world!");
+}
+
+#[test]
+fn arc_slice() {
+    let v = vec![String::from("abc"), String::from("def")];
+    let mut s = RefMut::<[String]>::new_slice(v.into_iter());
+    s[1] = String::from("ghi");
+    assert_eq!(&*s[0], "abc");
+    assert_eq!(&*s[1], "ghi");
 }
 

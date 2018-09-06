@@ -11,3 +11,4 @@ readme = "README.md"
 categories = ["rust-patterns", "memory-management"]
 
 [dependencies]
+stable_deref_trait = "1.1"

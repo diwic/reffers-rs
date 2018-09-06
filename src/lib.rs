@@ -2,9 +2,11 @@
 //!
 //! Features: 
 //!
-//! * rc::Strong/Weak/Ref/RefMut: An `Rc<RefCell<T>>` in just a few bytes of storage, and poisoning support.
-//!
 //! * ARef: `OwningRef` with even further erasure of the owner.
+//!
+//! * rc::Strong/Weak/Ref/RefMut: An `Rc<RefCell<T>>` in just a few bytes of storage, and poisoning support.
+//! 
+//! * arc::Strong/Weak/Ref/RefMut: An `Arc<Spinlock<T>>`- the thread-safe version of the above.
 //!
 //! * RMBA: Wrap a `&T`, `&mut T`, `Box<T>` or `Arc<T>` within the size of a single pointer. 
 //!
@@ -12,7 +14,10 @@
 
 // #![warn(missing_docs)]
 
+extern crate stable_deref_trait;
+
 use std::ops::{Deref, DerefMut};
+use stable_deref_trait::StableDeref;
 
 #[macro_use]
 mod rc_macros;
@@ -54,6 +59,15 @@ pub mod rc4 {
     pub type Strong<T> = ::rc::Strong<T, u32>;
     pub type Weak<T> = ::rc::Weak<T, u32>;
 }
+
+/// Type aliases for arc.
+pub mod arcu {
+    pub type Ref<T> = ::arc::Ref<T, usize>;
+    pub type RefMut<T> = ::arc::RefMut<T, usize>;
+    pub type Strong<T> = ::arc::Strong<T, usize>;
+    pub type Weak<T> = ::arc::Weak<T, usize>;
+}
+
 
 /// Typedefs for an rc with 8 bytes of overhead.
 pub mod rc8 {
@@ -97,6 +111,8 @@ impl<T: ?Sized> Deref for Bx<T> {
     fn deref(&self) -> &T { &self.0 }
 }
 
+unsafe impl<T: ?Sized> StableDeref for Bx<T> {}
+
 /// A simple wrapper around Box to avoid DerefMove. Like Bx,
 /// but also allows mutable access to the interior of the box.
 ///
@@ -124,4 +140,6 @@ impl<T: ?Sized> DerefMut for Bxm<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T { &mut self.0 }
 }
+
+unsafe impl<T: ?Sized> StableDeref for Bxm<T> {}
 

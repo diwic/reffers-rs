@@ -59,7 +59,7 @@
 //!
 //! // Inspect the change
 //! {
-//!     let r = strong.get();
+//!     let r = strong.get_ref();
 //!     assert_eq!(*r, 7i32);
 //!
 //!     // We cannot change the value from the other reference
@@ -75,11 +75,11 @@
 //! drop(strong);
 //!
 //! // We can't access the inner value, it has been dropped.
-//! assert_eq!(weak.try_get().unwrap_err(), State::Dropped);
+//! assert_eq!(weak.try_get_ref().unwrap_err(), State::Dropped);
 //! ```
 
 use std::cell::{Cell, UnsafeCell};
-use std::{fmt, mem, ptr, error, ops, borrow, convert, slice, hash, cmp};
+use std::{fmt, mem, ptr, error, ops, borrow, convert, slice, hash, cmp, alloc};
 use std::ptr::NonNull;
 use std::marker::PhantomData;
 
@@ -283,14 +283,14 @@ impl<T> CSlice<T> {
     pub (crate) fn data_ptr_mut(&mut self) -> *mut T { self.data.as_mut_ptr() }
 }
 
-fn cslice_len_to_capacity<T, M: BitMask>(l: usize) -> usize {
+fn cslice_len_to_layout<T, M: BitMask>(l: usize) -> alloc::Layout {
     let self_size = mem::size_of::<UnsafeCell<RCell<CSlice<T>, M>>>();
     let t_size = mem::size_of::<T>();
+    let align = mem::align_of::<UnsafeCell<RCell<CSlice<T>, M>>>();
     let data_bytes = l * t_size;
-    let r = 1 + ((data_bytes + self_size - 1) / self_size);
-    debug_assert!(self_size * (r - 1) >= l * t_size);
-    r
+    alloc::Layout::from_size_align(self_size + data_bytes, align).unwrap()
 }
+
 
 /// This is an implementation detail. Please don't mess with it.
 ///
@@ -308,7 +308,10 @@ unsafe impl<T> Repr for T {
     type Store = T;
     #[inline]
     fn convert(s: *mut T) -> *mut T { s }
-    unsafe fn deallocate_mem<M: BitMask>(s: &mut UnsafeCell<RCell<Self::Store, M>>) { let _ = Vec::from_raw_parts(s, 0, 1); }
+    unsafe fn deallocate_mem<M: BitMask>(s: &mut UnsafeCell<RCell<Self::Store, M>>) {
+        let layout = alloc::Layout::new::<UnsafeCell<RCell<T,M>>>();
+        alloc::dealloc(s as *mut _ as *mut u8, layout);
+    }
 }
 
 unsafe impl<T> Repr for [T] {
@@ -318,7 +321,8 @@ unsafe impl<T> Repr for [T] {
         unsafe { slice::from_raw_parts_mut((*s).data.as_mut_ptr(), (*s).len as usize) }
     }
     unsafe fn deallocate_mem<M: BitMask>(s: &mut UnsafeCell<RCell<Self::Store, M>>) {
-        let _ = Vec::from_raw_parts(s, 0, cslice_len_to_capacity::<T, M>((*(*s.get()).inner.get()).len as usize));
+        let layout = cslice_len_to_layout::<T, M>((*(*s.get()).inner.get()).len as usize);
+        alloc::dealloc(s as *mut _ as *mut u8, layout);
     }
 }
 
@@ -330,7 +334,8 @@ unsafe impl Repr for str {
         u as *mut str
     }}
     unsafe fn deallocate_mem<M: BitMask>(s: &mut UnsafeCell<RCell<Self::Store, M>>) { 
-        let _ = Vec::from_raw_parts(s, 0, cslice_len_to_capacity::<u8, M>((*(*s.get()).inner.get()).len as usize));
+        let layout = cslice_len_to_layout::<u8, M>((*(*s.get()).inner.get()).len as usize);
+        alloc::dealloc(s as *mut _ as *mut u8, layout);
     }
 }
 
@@ -344,25 +349,20 @@ unsafe impl Repr for str {
 //#[derive(Debug)]
 struct RCellPtr<T: ?Sized + Repr, M: BitMask>(NonNull<UnsafeCell<RCell<T::Store, M>>>, PhantomData<T>);
 
-fn allocate<T, M: BitMask>(capacity: usize, data: T) -> NonNull<UnsafeCell<RCell<T,M>>> {
-    // Allocate trick from https://github.com/rust-lang/rust/issues/27700
-    debug_assert!(capacity > 0);
-    let mut v = Vec::with_capacity(capacity);
-    v.push(UnsafeCell::new(RCell::new(data)));
-    let z = v.as_mut_ptr();
-    mem::forget(v);
-    debug_assert!(z != ptr::null_mut());
-    unsafe { NonNull::new_unchecked(z) }
+unsafe fn allocate_mem<T, M: BitMask>(layout: alloc::Layout, data: T) -> NonNull<UnsafeCell<RCell<T,M>>> {
+    let z = alloc::alloc(layout) as *mut UnsafeCell<RCell<T, M>>;
+    let z = NonNull::new(z).unwrap(); // Panic on alloc failure
+    ptr::write(z.as_ptr(), UnsafeCell::new(RCell::new(data)));
+    z
 }
 
 impl<M: BitMask> RCellPtr<str, M> {
     fn new_str(t: &str) -> Self {
         let len = t.len();
-        assert!(len <= u32::max_value() as usize);
-        let z = allocate(cslice_len_to_capacity::<u8, M>(len), CSlice { len: len as u32, data: [] });
-        let r: Self = RCellPtr(z, PhantomData);
-        unsafe { ptr::copy_nonoverlapping(t.as_ptr(), (*r.get().inner.get()).data.as_mut_ptr(), len) };
-        r
+        let layout = cslice_len_to_layout::<u8, M>(len);
+        let mut z = unsafe { allocate_mem(layout, CSlice::new(len)) };
+        unsafe { ptr::copy_nonoverlapping(t.as_ptr(), (*(*z.as_mut().get()).inner.get()).data.as_mut_ptr(), len) };
+        RCellPtr(z, PhantomData)
     }
 }
 
@@ -370,20 +370,23 @@ impl<M: BitMask> RCellPtr<str, M> {
 impl<T, M: BitMask> RCellPtr<[T], M> {
     fn new_slice<I: ExactSizeIterator<Item=T>>(iter: I) -> Self {
         let len = iter.len();
-        assert!(len <= u32::max_value() as usize);
-        let z = allocate(cslice_len_to_capacity::<T, M>(len), CSlice { len: len as u32, data: [] });
-        let r: Self = RCellPtr(z, PhantomData);
-        let p = unsafe { (*r.get().inner.get()).data.as_mut_ptr() };
-        for (idx, item) in iter.enumerate() {
-            unsafe { ptr::write(p.offset(idx as isize), item) }
+        let layout = cslice_len_to_layout::<T, M>(len);
+        unsafe {
+            let z = allocate_mem(layout, CSlice::new(len));
+            let r: Self = RCellPtr(z, PhantomData);
+            let p = (*r.get().inner.get()).data.as_mut_ptr();
+            for (idx, item) in iter.enumerate() {
+                ptr::write(p.offset(idx as isize), item)
+            }
+            r
         }
-        r
     }
 }
 
 impl<T, M: BitMask> RCellPtr<T, M> {
     fn new(t: T) -> Self {
-        let z = allocate(1, t);
+        let layout = alloc::Layout::new::<UnsafeCell<RCell<T,M>>>();
+        let z = unsafe { allocate_mem(layout, t) };
         let r = RCellPtr(z, PhantomData);
         debug_assert_eq!(r.0.as_ptr() as *const (), r.get() as *const _ as *const ());
         r
@@ -646,7 +649,12 @@ fn rc_basic() {
 #[test]
 fn rc_drop() {
     struct Dummy<'a>(&'a Cell<i32>);
-    impl<'a> Drop for Dummy<'a> { fn drop(&mut self) { self.0.set(73) }}
+    impl<'a> Drop for Dummy<'a> {
+        fn drop(&mut self) {
+            assert!(self.0.get() != 73);
+            self.0.set(73);
+        }
+    }
 
     let q = Cell::new(11i32);
     let z = <Strong<_>>::new(Dummy(&q));
@@ -660,6 +668,7 @@ fn rc_drop() {
 
     let q2 = Cell::new(12i32); 
     let z2 = <Strong<_>>::new_slice(vec![Dummy(&q2)].into_iter());
+    assert_eq!(q2.get(), 12);
     drop(z2);
     assert_eq!(q2.get(), 73);
 }

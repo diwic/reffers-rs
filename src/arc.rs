@@ -20,8 +20,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 use std::cell::UnsafeCell;
-use std::{mem, ptr, fmt, ops, borrow, convert, hash, cmp};
-// error, ops,  slice, };
+use std::{mem, ptr, fmt, ops, borrow, convert, hash, cmp, alloc};
 use std::ptr::NonNull;
 use std::marker::PhantomData;
 use rc::{BitMask, State, CSlice};
@@ -42,45 +41,44 @@ pub unsafe trait Repr: ::rc::Repr {
     unsafe fn deallocate_arc<M: BitMask>(NonNull<ArcBox<Self::Store, M>>);
 }
 
-fn allocate<T, M>(capacity: usize, data: T) -> NonNull<ArcBox<T, M>> {
-    // Allocate trick from https://github.com/rust-lang/rust/issues/27700
-    debug_assert!(capacity > 0);
-    let mut v = Vec::with_capacity(capacity);
-    v.push(ArcBox {
+unsafe fn allocate_mem<T, M: BitMask>(layout: alloc::Layout, data: T) -> NonNull<ArcBox<T, M>> {
+    let z = alloc::alloc(layout) as *mut ArcBox<T, M>;
+    let z = NonNull::new(z).unwrap(); // Panic on alloc failure
+    ptr::write(z.as_ptr(), ArcBox {
         mask: AtomicUsize::new(Default::default()),
         _dummy: PhantomData,
         inner: UnsafeCell::new(data),
     });
-    let z = v.as_mut_ptr();
-    mem::forget(v);
-    debug_assert!(z != ptr::null_mut());
-    unsafe { NonNull::new_unchecked(z) }
+    z
 }
 
 unsafe impl<T> Repr for T {
     unsafe fn deallocate_arc<M: BitMask>(s: NonNull<ArcBox<Self::Store, M>>) {
-        let _ = Vec::from_raw_parts(s.as_ptr(), 0, 1);
+        let layout = alloc::Layout::new::<ArcBox<Self::Store, M>>();
+        alloc::dealloc(s.as_ptr() as *mut u8, layout);
     }
 }
 
-fn cslice_len_to_capacity<T, M: BitMask>(l: usize) -> usize {
+fn cslice_len_to_layout<T, M: BitMask>(l: usize) -> alloc::Layout {
     let self_size = mem::size_of::<ArcBox<CSlice<T>, M>>();
     let t_size = mem::size_of::<T>();
+    let align = mem::align_of::<ArcBox<CSlice<T>, M>>();
     let data_bytes = l * t_size;
-    let r = 1 + ((data_bytes + self_size - 1) / self_size);
-    debug_assert!(self_size * (r - 1) >= l * t_size);
-    r
+    alloc::Layout::from_size_align(self_size + data_bytes, align).unwrap()
 }
+
 
 unsafe impl Repr for str {
     unsafe fn deallocate_arc<M: BitMask>(s: NonNull<ArcBox<Self::Store, M>>) {
-        let _ = Vec::from_raw_parts(s.as_ptr(), 0, cslice_len_to_capacity::<u8, M>((*s.as_ref().inner.get()).get_len()));
+        let layout = cslice_len_to_layout::<u8, M>((*s.as_ref().inner.get()).get_len());
+        alloc::dealloc(s.as_ptr() as *mut u8, layout);
     }
 }
 
 unsafe impl<T> Repr for [T] {
     unsafe fn deallocate_arc<M: BitMask>(s: NonNull<ArcBox<Self::Store, M>>) {
-        let _ = Vec::from_raw_parts(s.as_ptr(), 0, cslice_len_to_capacity::<T, M>((*s.as_ref().inner.get()).get_len()));
+        let layout = cslice_len_to_layout::<T, M>((*s.as_ref().inner.get()).get_len());
+        alloc::dealloc(s.as_ptr() as *mut u8, layout);
     }
 }
 
@@ -222,7 +220,8 @@ impl<T: ?Sized + Repr, M: BitMask<Num=usize> + fmt::Debug> fmt::Debug for ArcPtr
 
 impl<T, M: BitMask> ArcPtr<T, M> {
     fn new(t: T) -> Self {
-        let z = allocate(1, t);
+        let layout = alloc::Layout::new::<ArcBox<T,M>>();
+        let z = unsafe { allocate_mem(layout, t) };
         let r = ArcPtr(z, PhantomData);
         // debug_assert_eq!(r.0.as_ptr() as *const (), r.get() as *const _ as *const ());
         r
@@ -232,23 +231,27 @@ impl<T, M: BitMask> ArcPtr<T, M> {
 impl<M: BitMask> ArcPtr<str, M> {
     fn new_str(t: &str) -> Self {
         let len = t.len();
-        let z = allocate(cslice_len_to_capacity::<u8, M>(len), CSlice::new(len));
-        let mut r: Self = ArcPtr(z, PhantomData);
-        unsafe { ptr::copy_nonoverlapping(t.as_ptr(), (*r.0.as_mut().inner.get()).data_ptr_mut(), len) };
-        r
+        let layout = cslice_len_to_layout::<u8, M>(len);
+        let mut z = unsafe { allocate_mem(layout, CSlice::new(len)) };
+        unsafe { ptr::copy_nonoverlapping(t.as_ptr(), (*z.as_mut().inner.get()).data_ptr_mut(), len) };
+
+        ArcPtr(z, PhantomData)
     }
 }
 
 impl<T, M: BitMask> ArcPtr<[T], M> {
     fn new_slice<I: ExactSizeIterator<Item=T>>(iter: I) -> Self {
         let len = iter.len();
-        let z = allocate(cslice_len_to_capacity::<T, M>(len), CSlice::new(len));
-        let mut r: Self = ArcPtr(z, PhantomData);
-        let p = unsafe { (*r.0.as_mut().inner.get()).data_ptr_mut() };
-        for (idx, item) in iter.enumerate() {
-            unsafe { ptr::write(p.offset(idx as isize), item) }
+        let layout = cslice_len_to_layout::<T, M>(len);
+        unsafe {
+            let z = allocate_mem(layout, CSlice::new(len));
+            let mut r: Self = ArcPtr(z, PhantomData);
+            let p = (*r.0.as_mut().inner.get()).data_ptr_mut();
+            for (idx, item) in iter.enumerate() {
+                ptr::write(p.offset(idx as isize), item)
+            }
+            r
         }
-        r
     }
 }
 

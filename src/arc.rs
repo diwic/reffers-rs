@@ -6,8 +6,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 use std::cell::UnsafeCell;
-use std::{mem, ptr, fmt, ops};
-// error, ops, borrow, convert, slice, hash, cmp};
+use std::{mem, ptr, fmt, ops, borrow, convert, hash, cmp};
+// error, ops,  slice, };
 use std::ptr::NonNull;
 use std::marker::PhantomData;
 use rc::{BitMask, State, CSlice};
@@ -249,12 +249,7 @@ impl<T: ?Sized + Repr, M: BitMask<Num=usize>> RefMut<T, M> {
     impl_ref_all!();
 }
 
-impl<T: ?Sized + Repr, M: BitMask<Num=usize>> ops::Deref for RefMut<T, M> {
-    type Target = T;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target { unsafe { &*self.0.value_ptr() }}
-}
+impl_deref_and_friends!(RefMut, BitMask<Num=usize>);
 
 impl<T: ?Sized + Repr, M: BitMask<Num=usize>> ops::DerefMut for RefMut<T, M> {
     #[inline]
@@ -283,17 +278,13 @@ impl<T: ?Sized + Repr, M: BitMask<Num=usize>> Ref<T, M> {
     impl_ref_all!();
 }
 
+impl_deref_and_friends!(Ref, BitMask<Num=usize>);
+
 impl<T: ?Sized + Repr, M: BitMask<Num=usize>> Clone for Ref<T, M> {
     #[inline]
     fn clone(&self) -> Self { self.0.get_ref().unwrap() }
 }
 
-impl<T: ?Sized + Repr, M: BitMask<Num=usize>> ops::Deref for Ref<T, M> {
-    type Target = T;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target { unsafe { &*self.0.value_ptr() }}
-}
 
 // This requires T: Sync because there can be many Refs doing deref in parallel
 unsafe impl<T: Send + Sync, M: Send + BitMask<Num=usize>> Sync for Ref<T, M> {}

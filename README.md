@@ -13,14 +13,14 @@ This is like `Rc<RefCell<T>>`, but with slightly different trade-offs:
 
 * Configurable overhead (compared to a fixed 24 or 12 for `Rc<RefCell<T>>`)
 
-* The default of 4 bytes overhead gives you max 64 immutable references, 4096 strong references
-  and 4096 weak references, but this can easily be tweaked with just a few lines of code.
+* The default of 4 bytes overhead gives you max 1024 immutable references, 1024 strong references
+  and 1024 weak references, but this can easily be tweaked with just a few lines of code.
 
 * Poisoning support - after a panic with an active mutable reference,
   trying to get mutable or immutable references will return an error.
   This can be reverted by calling unpoison().
 
-Maybe something for your next tree with parent pointers?
+There is also a thread-safe version which is something like an `Arc<RwSpinlock<T>>`.
 
 
 ARef

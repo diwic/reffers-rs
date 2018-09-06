@@ -149,3 +149,66 @@ impl<T: ?Sized + Repr, M: BitMask<Num=usize>> Drop for $t<T, M> {
 
     }
 }
+
+macro_rules! impl_deref_and_friends {
+    ($r: ident, $($bm:tt)*) => {
+
+impl<T: ?Sized + Repr, M: $($bm)*> ops::Deref for $r<T, M> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target { unsafe { &*self.0.value_ptr() }}
+}
+
+unsafe impl<T: ?Sized + Repr, M: $($bm)*> ::StableDeref for $r<T, M> {}
+
+impl<T: ?Sized + Repr + fmt::Display, M: $($bm)*> fmt::Display for $r<T, M> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Display::fmt(&**self, f) }
+}
+
+impl<T: ?Sized + Repr, M: $($bm)*> borrow::Borrow<T> for $r<T, M> {
+    #[inline]
+    fn borrow(&self) -> &T { &**self }
+}
+
+impl<T: ?Sized + Repr, M: $($bm)*> convert::AsRef<T> for $r<T, M> {
+    #[inline]
+    fn as_ref(&self) -> &T { &**self }
+}
+
+impl<T: ?Sized + Repr + hash::Hash, M: $($bm)*> hash::Hash for $r<T, M> {
+    #[inline]
+    fn hash<H>(&self, state: &mut H) where H: hash::Hasher { (**self).hash(state) }
+}
+
+impl<T: ?Sized + Repr + PartialEq, M: $($bm)*> PartialEq for $r<T, M> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool { **self == **other }
+    #[inline]
+    fn ne(&self, other: &Self) -> bool { **self != **other }
+}
+
+impl<T: ?Sized + Repr + Eq, M: $($bm)*> Eq for $r<T, M> {}
+
+impl<T: ?Sized + Repr + PartialOrd, M: $($bm)*> PartialOrd for $r<T, M> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> { (**self).partial_cmp(&**other) }
+    #[inline]
+    fn lt(&self, other: &Self) -> bool { **self < **other }
+    #[inline]
+    fn le(&self, other: &Self) -> bool { **self <= **other }
+    #[inline]
+    fn gt(&self, other: &Self) -> bool { **self > **other }
+    #[inline]
+    fn ge(&self, other: &Self) -> bool { **self >= **other }
+}
+
+impl<T: ?Sized + Repr + Ord, M: $($bm)*> Ord for $r<T, M> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> cmp::Ordering { (**self).cmp(&**other) }
+}
+
+
+    }
+}

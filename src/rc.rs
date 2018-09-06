@@ -529,61 +529,7 @@ impl<T: ?Sized + Repr, M: BitMask> Drop for Ref<T, M> {
     }
 }
 
-impl<T: ?Sized + Repr, M: BitMask> ops::Deref for Ref<T, M> {
-    type Target = T;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target { unsafe { &*self.0.value_ptr() }}
-}
-
-unsafe impl<T: ?Sized + Repr, M: BitMask> ::StableDeref for Ref<T, M> {}
-
-impl<T: ?Sized + Repr + fmt::Display, M: BitMask> fmt::Display for Ref<T, M> {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Display::fmt(&**self, f) }
-}
-
-impl<T: ?Sized + Repr, M: BitMask> borrow::Borrow<T> for Ref<T, M> {
-    #[inline]
-    fn borrow(&self) -> &T { &**self }
-}
-
-impl<T: ?Sized + Repr, M: BitMask> convert::AsRef<T> for Ref<T, M> {
-    #[inline]
-    fn as_ref(&self) -> &T { &**self }
-}
-
-impl<T: ?Sized + Repr + hash::Hash, M: BitMask> hash::Hash for Ref<T, M> {
-    #[inline]
-    fn hash<H>(&self, state: &mut H) where H: hash::Hasher { (**self).hash(state) }
-}
-
-impl<T: ?Sized + Repr + PartialEq, M: BitMask> PartialEq for Ref<T, M> {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool { **self == **other }
-    #[inline]
-    fn ne(&self, other: &Self) -> bool { **self != **other }
-}
-
-impl<T: ?Sized + Repr + Eq, M: BitMask> Eq for Ref<T, M> {}
-
-impl<T: ?Sized + Repr + PartialOrd, M: BitMask> PartialOrd for Ref<T, M> {
-    #[inline]
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> { (**self).partial_cmp(&**other) }
-    #[inline]
-    fn lt(&self, other: &Self) -> bool { **self < **other }
-    #[inline]
-    fn le(&self, other: &Self) -> bool { **self <= **other }
-    #[inline]
-    fn gt(&self, other: &Self) -> bool { **self > **other }
-    #[inline]
-    fn ge(&self, other: &Self) -> bool { **self >= **other }
-}
-
-impl<T: ?Sized + Repr + Ord, M: BitMask> Ord for Ref<T, M> {
-    #[inline]
-    fn cmp(&self, other: &Self) -> cmp::Ordering { (**self).cmp(&**other) }
-}
+impl_deref_and_friends!(Ref, BitMask);
 
 impl<T: ?Sized + Repr, M: BitMask> Clone for Ref<T, M> {
     #[inline]
@@ -612,64 +558,11 @@ impl<T: ?Sized + Repr, M: BitMask> Drop for RefMut<T, M> {
     }
 }
 
-impl<T: ?Sized + Repr, M: BitMask> ops::Deref for RefMut<T, M> {
-    type Target = T;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target { unsafe { &*self.0.value_ptr() }}
-}
-
-unsafe impl<T: ?Sized + Repr, M: BitMask> ::StableDeref for RefMut<T, M> {}
+impl_deref_and_friends!(RefMut, BitMask);
 
 impl<T: ?Sized + Repr, M: BitMask> ops::DerefMut for RefMut<T, M> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut *self.0.value_ptr() }}
-}
-
-
-impl<T: ?Sized + Repr, M: BitMask> borrow::Borrow<T> for RefMut<T, M> {
-    fn borrow(&self) -> &T { &**self }
-}
-
-impl<T: ?Sized + Repr, M: BitMask> convert::AsRef<T> for RefMut<T, M> {
-    fn as_ref(&self) -> &T { &**self }
-}
-
-impl<T: ?Sized + Repr + fmt::Display, M: BitMask> fmt::Display for RefMut<T, M> {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Display::fmt(&**self, f) }
-}
-
-impl<T: ?Sized + Repr + hash::Hash, M: BitMask> hash::Hash for RefMut<T, M> {
-    #[inline]
-    fn hash<H>(&self, state: &mut H) where H: hash::Hasher { (**self).hash(state) }
-}
-
-impl<T: ?Sized + Repr + PartialEq, M: BitMask> PartialEq for RefMut<T, M> {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool { **self == **other }
-    #[inline]
-    fn ne(&self, other: &Self) -> bool { **self != **other }
-}
-
-impl<T: ?Sized + Repr + Eq, M: BitMask> Eq for RefMut<T, M> {}
-
-impl<T: ?Sized + Repr + PartialOrd, M: BitMask> PartialOrd for RefMut<T, M> {
-    #[inline]
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> { (**self).partial_cmp(&**other) }
-    #[inline]
-    fn lt(&self, other: &Self) -> bool { **self < **other }
-    #[inline]
-    fn le(&self, other: &Self) -> bool { **self <= **other }
-    #[inline]
-    fn gt(&self, other: &Self) -> bool { **self > **other }
-    #[inline]
-    fn ge(&self, other: &Self) -> bool { **self >= **other }
-}
-
-impl<T: ?Sized + Repr + Ord, M: BitMask> Ord for RefMut<T, M> {
-    #[inline]
-    fn cmp(&self, other: &Self) -> cmp::Ordering { (**self).cmp(&**other) }
 }
 
 

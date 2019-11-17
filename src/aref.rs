@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuar
 use std::cell::{Ref, RefMut, RefCell};
 use std::marker::PhantomData;
 
-type ARefStorage = [usize; 3]; 
+type ARefStorage = [usize; 3];
 
 /// An unsafe trait that makes sure the type can be used as owner for ARef.
 ///
@@ -32,7 +32,7 @@ pub trait Descend {
 
 impl<T: 'static> Descend for RefCell<T> {
     type Inner = Ref<'static, T>;
-    unsafe fn descend(&self) -> Self::Inner { 
+    unsafe fn descend(&self) -> Self::Inner {
         let x: Ref<T> = self.borrow();
         mem::transmute(x)
     }
@@ -154,7 +154,7 @@ unsafe impl<'a, T: ?Sized> AReffic for MutexGuard<'a, T> {}
 /// ```
 /// use std::rc::Rc;
 /// use reffers::ARef;
-/// 
+///
 /// struct CountDown(pub Rc<String>);
 /// impl CountDown {
 ///     pub fn idx_to_str(&self, idx: u32) -> ARef<str> {
@@ -168,7 +168,7 @@ unsafe impl<'a, T: ?Sized> AReffic for MutexGuard<'a, T> {}
 ///         }
 ///     }
 /// }
-/// 
+///
 /// let c = CountDown(Rc::new("Ready!".into()));
 /// assert_eq!(&*c.idx_to_str(3), "3...");
 /// assert_eq!(&*c.idx_to_str(2), "2...");
@@ -434,7 +434,7 @@ impl<'a, U: ?Sized> ARef<'a, U> {
     }
 
     unsafe fn new_custom<O>(owner: O, target: *const U, drop_fn: unsafe fn (*mut ARefStorage)) -> Self {
-        let mut storage: ARefStorage = mem::uninitialized();
+        let mut storage: ARefStorage = mem::zeroed();
         ptr::copy(&owner, &mut storage as *mut _ as *mut O, 1);
         mem::forget(owner);
         ARef {
@@ -482,7 +482,7 @@ impl<'a, U: ?Sized> ARef<'a, U> {
     /// assert_eq!(aref.try_map(|s| s.get(9).ok_or(())), Err(()));
     /// ```
     pub fn try_map<E, V: ?Sized, F: FnOnce(&U) -> Result<&V, E>>(self, f: F) -> Result<ARef<'a, V>, E> {
-        let v: *const V = try!(f(&self));
+        let v: *const V = f(&self)?;
         unsafe { Ok(self.map_internal(v)) }
     }
 
@@ -527,7 +527,7 @@ impl<'a, U: ?Sized> ARefs<'a, U> {
     /// assert_eq!(aref.try_map(|s| s.get(9).ok_or(())), Err(()));
     /// ```
     #[inline]
-    pub fn try_map<E, V: ?Sized, F: FnOnce(&U) -> Result<&V, E>>(self, f: F) -> Result<ARefs<'a, V>, E> { 
+    pub fn try_map<E, V: ?Sized, F: FnOnce(&U) -> Result<&V, E>>(self, f: F) -> Result<ARefs<'a, V>, E> {
         self.0.try_map(f).map(|z| ARefs(z))
     }
 
@@ -575,7 +575,7 @@ impl<'a, U: ?Sized> ARefss<'a, U> {
     /// assert_eq!(aref.try_map(|s| s.get(9).ok_or(())), Err(()));
     /// ```
     #[inline]
-    pub fn try_map<E, V: ?Sized, F: FnOnce(&U) -> Result<&V, E>>(self, f: F) -> Result<ARefss<'a, V>, E> { 
+    pub fn try_map<E, V: ?Sized, F: FnOnce(&U) -> Result<&V, E>>(self, f: F) -> Result<ARefss<'a, V>, E> {
         self.0.try_map(f).map(|z| ARefss(z))
     }
 
@@ -674,13 +674,13 @@ fn verify_types() {
 /*
 fn compile_fail<'a>() -> ARef<'a, str> {
     let z = String::from("Hello world");
-    let z2: &str = &z; 
+    let z2: &str = &z;
     z2.into()
 }
 
 fn compile_fail2<'a>() -> ARef<'a, [&'a u8]> {
     let z = vec![5u8, 4, 3];
-    let z2 = vec![&z[0], &z[2]]; 
+    let z2 = vec![&z[0], &z[2]];
     z2.into()
 }
 
@@ -709,4 +709,3 @@ fn countdown_example() {
     assert_eq!(&*c.idx_to_str(1), "Ready!");
     assert_eq!(&*c.idx_to_str(2), "2...");
 }
-

@@ -7,7 +7,7 @@
 //!
 //! * Poisoning support - after a panic with an active mutable reference,
 //! trying to get mutable or immutable references will return an error.
-//! This can be reverted by calling unpoison(). 
+//! This can be reverted by calling unpoison().
 //!
 //! * Supports reference counted `str` and `[T]`. It's represented as a single pointer
 //! (unlike e g `Box<str>`, which is a fat pointer).
@@ -34,11 +34,11 @@
 //!
 //! Where applicable, there are `.get_strong()` and `.get_weak()` functions that create new Strong and
 //! Weak references. There are also `.try_get_ref()`, `.try_get_refmut()` etc functions that return an error instead
-//! of panicking in case the reference is in an incorrect state. 
+//! of panicking in case the reference is in an incorrect state.
 //!
 //! # Using only as `Rc` or only as `RefCell`
 //!
-//! If you want to do this like `Rc` and never want to mutate the interior, just use `Ref` like an ordinary rc pointer. 
+//! If you want to do this like `Rc` and never want to mutate the interior, just use `Ref` like an ordinary rc pointer.
 //! Combine with `Weak` for weak pointers, if you wish.
 //!
 //! If you want to use the `RefCell` part (e g, for the poisoning) but without reference counting, you can use `RCell` for that.
@@ -91,7 +91,7 @@ pub use rc_bitmask::BitMask;
 /// Current state of the Rc.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum State {
-    /// No RefMut nor Ref currently exist - this Rc can be borrowed freely 
+    /// No RefMut nor Ref currently exist - this Rc can be borrowed freely
     Available = 0,
     /// Mutable borrowed by an RefMut.
     BorrowedMut = 1,
@@ -127,7 +127,7 @@ impl<M: BitMask> From<M> for State {
 
 impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", (self as &error::Error).description())
+        write!(f, "{}", error::Error::description(self))
     }
 }
 
@@ -139,7 +139,7 @@ impl error::Error for State {
             State::BorrowedMut => "Rc/cell is mutably borrowed",
             State::Poisoned => "Rc/cell is poisoned",
             State::Dropped => "Rc/cell is dropped",
-            State::NotEnoughRefs => "Immutable reference count overflow (no more Refs available)", 
+            State::NotEnoughRefs => "Immutable reference count overflow (no more Refs available)",
             State::NotEnoughStrongs => "Strong reference count overflow (no more Strongs available)",
             State::NotEnoughWeaks => "Weak reference count overflow (no more Weaks available)"
         }
@@ -160,7 +160,6 @@ pub struct RCell<T: ?Sized, M: BitMask = u8> {
 impl<T, M: BitMask> RCell<T, M> {
     #[inline]
     pub fn new(t: T) -> Self {
-        use std::default::Default; 
         RCell { mask: Cell::new(Default::default()),
             inner: UnsafeCell::new(t) }
     }
@@ -187,7 +186,7 @@ impl<T: ?Sized, M: BitMask> RCell<T, M> {
         let s = s as u8;
         debug_assert!(s <= 3);
         let mut m2 = self.mask.get();
-        m2.set_state(s); 
+        m2.set_state(s);
         self.mask.set(m2);
     }
 
@@ -196,7 +195,7 @@ impl<T: ?Sized, M: BitMask> RCell<T, M> {
         if s != State::Available && s != State::Borrowed { return Err(s); }
 
         let mut m = self.mask.get();
-        try!(m.inc(BM_REF));
+        m.inc(BM_REF)?;
         self.mask.set(m);
 
         Ok(RCellRef(self))
@@ -275,9 +274,9 @@ pub struct CSlice<T> {
 }
 
 impl<T> CSlice<T> {
-    pub (crate) fn new(len: usize) -> Self { 
+    pub (crate) fn new(len: usize) -> Self {
         assert!(len <= u32::max_value() as usize);
-        CSlice { len: len as u32, data: [] } 
+        CSlice { len: len as u32, data: [] }
     }
     pub (crate) fn get_len(&self) -> usize { self.len as usize }
     pub (crate) fn data_ptr_mut(&mut self) -> *mut T { self.data.as_mut_ptr() }
@@ -333,16 +332,16 @@ unsafe impl Repr for str {
         let u: *mut [u8] = slice::from_raw_parts_mut((*s).data.as_mut_ptr(), (*s).len as usize);
         u as *mut str
     }}
-    unsafe fn deallocate_mem<M: BitMask>(s: &mut UnsafeCell<RCell<Self::Store, M>>) { 
+    unsafe fn deallocate_mem<M: BitMask>(s: &mut UnsafeCell<RCell<Self::Store, M>>) {
         let layout = cslice_len_to_layout::<u8, M>((*(*s.get()).inner.get()).len as usize);
         alloc::dealloc(s as *mut _ as *mut u8, layout);
     }
 }
 
 
-// Note: This would benefit from CoerceUnsized support 
+// Note: This would benefit from CoerceUnsized support
 //
-// Note2: I'm not sure the UnsafeCell is needed. But otherwise we'd have to 
+// Note2: I'm not sure the UnsafeCell is needed. But otherwise we'd have to
 // cast the *const to a *mut instead and using UnsafeCell makes me more sure
 // that this isn't UB
 
@@ -409,7 +408,7 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
     fn get_strong(&self) -> Result<Strong<T, M>, State> {
         let e = self.state();
         if e != State::Dropped {
-            try!(self.inc(BM_STRONG));
+            self.inc(BM_STRONG)?;
             Ok(Strong(RCellPtr(self.0, PhantomData), PhantomData))
         }
         else { Err(e) }
@@ -417,7 +416,7 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
 
     #[inline]
     fn get_weak(&self) -> Result<Weak<T, M>, State> {
-        try!(self.inc(BM_WEAK));
+        self.inc(BM_WEAK)?;
         Ok(Weak(RCellPtr(self.0, PhantomData)))
     }
 
@@ -461,7 +460,7 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
     fn get_ref(&self) -> Result<Ref<T, M>, State> {
         let e = self.state();
         if e == State::Available || e == State::Borrowed {
-            try!(self.inc(BM_REF));
+            self.inc(BM_REF)?;
             Ok(Ref(RCellPtr(self.0, PhantomData), PhantomData))
         }
         else { Err(e) }
@@ -473,7 +472,7 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
     #[inline]
     fn inc(&self, idx: usize) -> Result<(), State> {
         let mut m = self.get().mask.get();
-        try!(m.inc(idx));
+        m.inc(idx)?;
         self.get().mask.set(m);
         Ok(())
     }
@@ -490,7 +489,7 @@ impl<T: ?Sized + Repr, M: BitMask> RCellPtr<T, M> {
 }
 
 
-impl<T: ?Sized + Repr, M: BitMask + fmt::Debug> fmt::Debug for RCellPtr<T, M> 
+impl<T: ?Sized + Repr, M: BitMask + fmt::Debug> fmt::Debug for RCellPtr<T, M>
     where T::Store: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -571,7 +570,7 @@ impl<T: ?Sized + Repr, M: BitMask> ops::DerefMut for RefMut<T, M> {
 
 /// A strong reference without access to the inner value.
 ///
-/// To get immutable/mutable access, you need to use the 
+/// To get immutable/mutable access, you need to use the
 /// get_ref/get_refmut functions to create Ref or RefMut references.
 ///
 /// The inner value cannot be dropped while Strong, Ref or RefMut references exist.
@@ -600,7 +599,7 @@ impl<T: ?Sized + Repr, M: BitMask> Clone for Strong<T, M> {
 
 /// A weak reference without access to the inner value.
 ///
-/// To get immutable/mutable access, you need to use the 
+/// To get immutable/mutable access, you need to use the
 /// get_ref/get_refmut functions to create Ref or RefMut references.
 ///
 /// If only weak references exist to the inner value,
@@ -666,7 +665,7 @@ fn rc_drop() {
     drop(z2);
     assert_eq!(q.get(), 73);
 
-    let q2 = Cell::new(12i32); 
+    let q2 = Cell::new(12i32);
     let z2 = <Strong<_>>::new_slice(vec![Dummy(&q2)].into_iter());
     assert_eq!(q2.get(), 12);
     drop(z2);

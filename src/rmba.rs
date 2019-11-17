@@ -15,7 +15,7 @@ pub enum SlowRMBA<'a, T: 'a + ?Sized> {
 }
 
 impl<'a, T: 'a + ?Sized> SlowRMBA<'a, T> {
-    /// Will return a clone if it contains a Arc<T> or &T, or None if it is a Box<T> or &mut T 
+    /// Will return a clone if it contains a Arc<T> or &T, or None if it is a Box<T> or &mut T
     pub fn try_clone(&self) -> Option<SlowRMBA<'a, T>> {
         match self {
             &SlowRMBA::Ref(ref t) => Some(SlowRMBA::Ref(t)),
@@ -55,7 +55,7 @@ impl<'a, T: 'a + ?Sized> Deref for SlowRMBA<'a, T> {
 ///
 /// Note: Drop flags were removed in 1.13-nightly. If you run an earlier version,
 /// size might be larger than a single pointer due to the drop flag.
-/// 
+///
 /// # Example
 /// ```
 /// use reffers::RMBA;
@@ -88,7 +88,7 @@ impl<'a, T: 'a + ?Sized> RMBA<'a, T> {
         let f: *mut usize = (&mut p) as *mut _ as *mut usize;
         unsafe {
             let g = *f & 3;
-            *f = *f & (!3); 
+            *f = *f & (!3);
             (p, g)
         }
     }
@@ -99,7 +99,7 @@ impl<'a, T: 'a + ?Sized> RMBA<'a, T> {
         unsafe {
             assert!(*f & 3 == 0);
             *f = *f + add;
-        }; 
+        };
         RMBA(p, PhantomData)
     }
 
@@ -112,10 +112,10 @@ impl<'a, T: 'a + ?Sized> RMBA<'a, T> {
         *f = *f - 2*mem::size_of::<AtomicUsize>();
         mem::transmute(p)
     }
-    
+
     pub fn new<A: Into<RMBA<'a, T>>>(t: A) -> RMBA<'a, T> { t.into() }
 
-    /// Will return a clone if it contains a Arc<T> or &T, or None if it is a Box<T> or &mut T 
+    /// Will return a clone if it contains a Arc<T> or &T, or None if it is a Box<T> or &mut T
     pub fn try_clone(&self) -> Option<RMBA<'a, T>> {
         match self.unpack() {
             (_, 0) => Some(RMBA(self.0, PhantomData)),
@@ -246,13 +246,13 @@ impl<'a, T: ?Sized + Ord> Ord for RMBA<'a, T> {
 
 #[test]
 fn rmba_fat() {
-    trait Dummy { fn foo(&self) -> i32; } 
+    trait Dummy { fn foo(&self) -> i32; }
     impl Dummy for u8 { fn foo(&self) -> i32 { *self as i32 } }
     impl Dummy for i32 { fn foo(&self) -> i32 { *self } }
 
-    let z: SlowRMBA<Dummy> = SlowRMBA::Box(Box::new(9u8));
-    let r: RMBA<Dummy> = (Box::new(9i32) as Box<Dummy>).into();
-    let a: RMBA<Dummy> = (Arc::new(17i32) as Arc<Dummy>).into();
+    let z: SlowRMBA<dyn Dummy> = SlowRMBA::Box(Box::new(9u8));
+    let r: RMBA<dyn Dummy> = (Box::new(9i32) as Box<dyn Dummy>).into();
+    let a: RMBA<dyn Dummy> = (Arc::new(17i32) as Arc<dyn Dummy>).into();
     assert_eq!(r.foo(), z.foo());
     assert_eq!(a.try_clone().unwrap().foo(), 17i32);
 }
@@ -271,7 +271,7 @@ fn rmba_box() {
     assert!(z != RMBA::new_box(75));
 }
 
-#[test] 
+#[test]
 fn rmba_arc() {
     let mut a = Arc::new(53);
     let mut f = RMBA::new(a.clone());
@@ -293,7 +293,7 @@ fn rmba_arc() {
 fn rmba_unaligned() {
     let b = vec![5u8, 7u8];
     let _ = RMBA::new(&b[0]); // Either of these two will fail - u8 is not 32 bit aligned
-    let _ = RMBA::new(&b[1]); 
+    let _ = RMBA::new(&b[1]);
 }
 
 #[test]
@@ -314,4 +314,3 @@ fn rmba_sizes() {
     assert_eq!(size_of::<&i32>(), size_of::<RMBA<i32>>());
     assert!(size_of::<RMBA<i32>>() < size_of::<SlowRMBA<i32>>());
 }
-

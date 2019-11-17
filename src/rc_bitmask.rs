@@ -1,11 +1,11 @@
 use rc::State;
 use std::{ops, cmp};
 
-/// The first returned value from BitMask::bits is number of bits for Ref. 
+/// The first returned value from BitMask::bits is number of bits for Ref.
 pub const BM_REF: usize = 0;
-/// The second returned value from BitMask::bits is number of bits for Strong. 
+/// The second returned value from BitMask::bits is number of bits for Strong.
 pub const BM_STRONG: usize = 1;
-/// The third returned value from BitMask::bits is number of bits for Weak. 
+/// The third returned value from BitMask::bits is number of bits for Weak.
 pub const BM_WEAK: usize = 2;
 
 // Always points to the lowest two bits.
@@ -20,7 +20,7 @@ pub unsafe trait BitMask: Copy + Default {
     type Num: Copy + Default + ops::BitAnd<Output=Self::Num> + cmp::PartialEq +
        ops::Add<Output=Self::Num> + ops::Sub<Output=Self::Num> + From<u8> + ops::Not<Output=Self::Num>;
 
-    /// All zero bits, except for the first bit 
+    /// All zero bits, except for the first bit
     const SHIFTED: [Self::Num; 4];
 
     /// Transforms bits into masks.
@@ -53,7 +53,8 @@ macro_rules! rc_bit_mask_internal {
         ];
     };
 
-    (primitive, $t: ty, $r:expr, $s: expr, $w: expr) => {
+    (primitive, $t: ty, $r:expr, $s: expr, $w: expr, $(#[$docs:meta])*) => {
+        $(#[$docs])*
         unsafe impl $crate::rc::BitMask for $t {
             type Num = $t;
 
@@ -149,7 +150,7 @@ impl<M: BitMask> BitMaskOps for M {
         let mmask = Self::MASKS[idx];
         let morig = self.get_inner();
         let zero: M::Num = Default::default();
-        zero == morig & mmask        
+        zero == morig & mmask
     }
 
     /// Decrements reference count of a certain type,
@@ -173,25 +174,31 @@ impl<M: BitMask> BitMaskOps for M {
 }
 
 
-/// Using u8 will allow for a maximum of four Ref, four Strong and four Weak.
-///
-/// That's not much, maybe you want to implement your own wrapper type instead. 
-rc_bit_mask_internal!(primitive, u8, 2, 2, 2);
+rc_bit_mask_internal!(primitive, u8, 2, 2, 2,
+    /// Using u8 will allow for a maximum of four Ref, four Strong and four Weak.
+    ///
+    /// That's not much, maybe you want to implement your own wrapper type instead.
+);
 
-/// Using u16 will allow for a maximum of 32 Ref, 16 Strong and 32 Weak.
-rc_bit_mask_internal!(primitive, u16, 5, 4, 5);
+rc_bit_mask_internal!(primitive, u16, 5, 4, 5,
+    /// Using u16 will allow for a maximum of 32 Ref, 16 Strong and 32 Weak.
+);
 
-/// Using u32 will allow for a maximum of 1024 Ref, 1024 Strong and 1024 Weak.
-rc_bit_mask_internal!(primitive, u32, 10, 10, 10);
+rc_bit_mask_internal!(primitive, u32, 10, 10, 10,
+    /// Using u32 will allow for a maximum of 1024 Ref, 1024 Strong and 1024 Weak.
+);
 
-/// Usize defaults to same as u32.
-rc_bit_mask_internal!(primitive, usize, 10, 10, 10);
+rc_bit_mask_internal!(primitive, usize, 10, 10, 10,
+    /// Usize defaults to same as u32.
+);
 
-/// Using u64 will allow for a maximum of 2097152 Ref, 1048576 Strong and 2097152 Weak.
-rc_bit_mask_internal!(primitive, u64, 21, 20, 21);
+rc_bit_mask_internal!(primitive, u64, 21, 20, 21,
+    /// Using u64 will allow for a maximum of 2097152 Ref, 1048576 Strong and 2097152 Weak.
+);
 
-/// Using u128 will give you 42 bits of Ref, Strong and Weak.
-rc_bit_mask_internal!(primitive, u128, 42, 42, 42);
+rc_bit_mask_internal!(primitive, u128, 42, 42, 42,
+    /// Using u128 will give you 42 bits of Ref, Strong and Weak.
+);
 
 
 
@@ -212,5 +219,3 @@ fn bitmask() {
     assert_eq!(u64::MASKS[BM_WEAK], 0xffff_f800_0000_0000);
     assert_eq!(u128::MASKS[BM_WEAK], 0xffff_ffff_ffc0_0000_0000_0000_0000_0000);
 }
-
-

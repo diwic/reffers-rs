@@ -28,63 +28,63 @@ mod rc_bitmask;
 pub mod rc;
 pub mod arc;
 
-pub use aref::ARef as ARef;
-pub use aref::ARefs as ARefs;
-pub use aref::ARefss as ARefss;
-pub use rmba::RMBA as RMBA;
+pub use crate::aref::ARef as ARef;
+pub use crate::aref::ARefs as ARefs;
+pub use crate::aref::ARefss as ARefss;
+pub use crate::rmba::RMBA as RMBA;
 
 /// Type aliases for an rc with 1 byte of overhead.
 pub mod rc1 {
-    pub type RCell<T> = ::rc::RCell<T, u8>;
-    pub type Ref<T> = ::rc::Ref<T, u8>;
-    pub type RefMut<T> = ::rc::RefMut<T, u8>;
-    pub type Strong<T> = ::rc::Strong<T, u8>;
-    pub type Weak<T> = ::rc::Weak<T, u8>;
+    pub type RCell<T> = crate::rc::RCell<T, u8>;
+    pub type Ref<T> = crate::rc::Ref<T, u8>;
+    pub type RefMut<T> = crate::rc::RefMut<T, u8>;
+    pub type Strong<T> = crate::rc::Strong<T, u8>;
+    pub type Weak<T> = crate::rc::Weak<T, u8>;
 }
 
 /// Type aliases for an rc with 2 bytes of overhead.
 pub mod rc2 {
-    pub type RCell<T> = ::rc::RCell<T, u16>;
-    pub type Ref<T> = ::rc::Ref<T, u16>;
-    pub type RefMut<T> = ::rc::RefMut<T, u16>;
-    pub type Strong<T> = ::rc::Strong<T, u16>;
-    pub type Weak<T> = ::rc::Weak<T, u16>;
+    pub type RCell<T> = crate::rc::RCell<T, u16>;
+    pub type Ref<T> = crate::rc::Ref<T, u16>;
+    pub type RefMut<T> = crate::rc::RefMut<T, u16>;
+    pub type Strong<T> = crate::rc::Strong<T, u16>;
+    pub type Weak<T> = crate::rc::Weak<T, u16>;
 }
 
 /// Type aliases for an rc with 4 bytes of overhead.
 pub mod rc4 {
-    pub type RCell<T> = ::rc::RCell<T, u32>;
-    pub type Ref<T> = ::rc::Ref<T, u32>;
-    pub type RefMut<T> = ::rc::RefMut<T, u32>;
-    pub type Strong<T> = ::rc::Strong<T, u32>;
-    pub type Weak<T> = ::rc::Weak<T, u32>;
+    pub type RCell<T> = crate::rc::RCell<T, u32>;
+    pub type Ref<T> = crate::rc::Ref<T, u32>;
+    pub type RefMut<T> = crate::rc::RefMut<T, u32>;
+    pub type Strong<T> = crate::rc::Strong<T, u32>;
+    pub type Weak<T> = crate::rc::Weak<T, u32>;
 }
 
 /// Type aliases for arc.
 pub mod arcu {
-    pub type Ref<T> = ::arc::Ref<T, usize>;
-    pub type RefMut<T> = ::arc::RefMut<T, usize>;
-    pub type Strong<T> = ::arc::Strong<T, usize>;
-    pub type Weak<T> = ::arc::Weak<T, usize>;
+    pub type Ref<T> = crate::arc::Ref<T, usize>;
+    pub type RefMut<T> = crate::arc::RefMut<T, usize>;
+    pub type Strong<T> = crate::arc::Strong<T, usize>;
+    pub type Weak<T> = crate::arc::Weak<T, usize>;
 }
 
 
 /// Typedefs for an rc with 8 bytes of overhead.
 pub mod rc8 {
-    pub type RCell<T> = ::rc::RCell<T, u64>;
-    pub type Ref<T> = ::rc::Ref<T, u64>;
-    pub type RefMut<T> = ::rc::RefMut<T, u64>;
-    pub type Strong<T> = ::rc::Strong<T, u64>;
-    pub type Weak<T> = ::rc::Weak<T, u64>;
+    pub type RCell<T> = crate::rc::RCell<T, u64>;
+    pub type Ref<T> = crate::rc::Ref<T, u64>;
+    pub type RefMut<T> = crate::rc::RefMut<T, u64>;
+    pub type Strong<T> = crate::rc::Strong<T, u64>;
+    pub type Weak<T> = crate::rc::Weak<T, u64>;
 }
 
 /// Typedefs for an rc with 16 bytes of overhead.
 pub mod rc16 {
-    pub type RCell<T> = ::rc::RCell<T, u128>;
-    pub type Ref<T> = ::rc::Ref<T, u128>;
-    pub type RefMut<T> = ::rc::RefMut<T, u128>;
-    pub type Strong<T> = ::rc::Strong<T, u128>;
-    pub type Weak<T> = ::rc::Weak<T, u128>;
+    pub type RCell<T> = crate::rc::RCell<T, u128>;
+    pub type Ref<T> = crate::rc::Ref<T, u128>;
+    pub type RefMut<T> = crate::rc::RefMut<T, u128>;
+    pub type Strong<T> = crate::rc::Strong<T, u128>;
+    pub type Weak<T> = crate::rc::Weak<T, u128>;
 }
 
 

@@ -9,6 +9,7 @@ repository = "https://github.com/diwic/reffers-rs"
 documentation = "http://docs.rs/reffers"
 readme = "README.md"
 categories = ["rust-patterns", "memory-management"]
+edition = "2018"
 
 [dependencies]
 stable_deref_trait = "1.1"

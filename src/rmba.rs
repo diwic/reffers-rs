@@ -185,7 +185,7 @@ impl<'a, T: 'a + ?Sized> Deref for RMBA<'a, T> {
     fn deref(&self) -> &T { unsafe { &*self.unpack().0 }}
 }
 
-unsafe impl<'a, T: 'a + ?Sized> ::StableDeref for RMBA<'a, T> {}
+unsafe impl<'a, T: 'a + ?Sized> crate::StableDeref for RMBA<'a, T> {}
 
 impl<'a, T: 'a + ?Sized> Drop for RMBA<'a, T> {
     fn drop(&mut self) {

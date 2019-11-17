@@ -1,5 +1,5 @@
-//! This is somewhat like an `Arc<RwLock<T>>`, but with only one usize of overhead, 
-//! and the lock is a spinlock (there is no wait-and-sleep functionality). 
+//! This is somewhat like an `Arc<RwLock<T>>`, but with only one usize of overhead,
+//! and the lock is a spinlock (there is no wait-and-sleep functionality).
 //!
 //! Conceptually similar to rc, but this is a thread-safe version.
 //!
@@ -23,8 +23,8 @@ use std::cell::UnsafeCell;
 use std::{mem, ptr, fmt, ops, borrow, convert, hash, cmp, alloc};
 use std::ptr::NonNull;
 use std::marker::PhantomData;
-use rc::{BitMask, State, CSlice};
-use rc_bitmask::{BitMaskOps, BM_REF, BM_STRONG, BM_WEAK};
+use crate::rc::{BitMask, State, CSlice};
+use crate::rc_bitmask::{BitMaskOps, BM_REF, BM_STRONG, BM_WEAK};
 
 #[doc(hidden)]
 pub struct ArcBox<T: ?Sized, M> {
@@ -36,9 +36,9 @@ pub struct ArcBox<T: ?Sized, M> {
 /// This is an implementation detail. Please don't mess with it.
 ///
 /// It's for abstracting over sized and unsized types.
-pub unsafe trait Repr: ::rc::Repr {
+pub unsafe trait Repr: crate::rc::Repr {
     #[doc(hidden)]
-    unsafe fn deallocate_arc<M: BitMask>(NonNull<ArcBox<Self::Store, M>>);
+    unsafe fn deallocate_arc<M: BitMask>(_: NonNull<ArcBox<Self::Store, M>>);
 }
 
 unsafe fn allocate_mem<T, M: BitMask>(layout: alloc::Layout, data: T) -> NonNull<ArcBox<T, M>> {
@@ -172,7 +172,7 @@ impl<T: ?Sized + Repr, M: BitMask<Num=usize>> ArcPtr<T, M> {
         let mut should_drop = None;
         self.cas_loop(|mut mask| {
             // Is this the last reference?
-            if let Some(i) = idx { 
+            if let Some(i) = idx {
                 mask.dec(i);
             } else {
                 use std::thread;
@@ -210,7 +210,7 @@ impl<T: ?Sized + Repr, M: BitMask<Num=usize>> ArcPtr<T, M> {
     fn state(&self) -> State { self.load_mask().into() }
 }
 
-impl<T: ?Sized + Repr, M: BitMask<Num=usize> + fmt::Debug> fmt::Debug for ArcPtr<T, M> 
+impl<T: ?Sized + Repr, M: BitMask<Num=usize> + fmt::Debug> fmt::Debug for ArcPtr<T, M>
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self.state())
@@ -308,7 +308,7 @@ unsafe impl<T: Send + Sync, M: Send + BitMask<Num=usize>> Sync for Ref<T, M> {}
 
 /// A strong reference without access to the inner value.
 ///
-/// To get immutable/mutable access, you need to use the 
+/// To get immutable/mutable access, you need to use the
 /// get_ref/get_refmut functions to create Ref or RefMut references.
 ///
 /// The inner value cannot be dropped while Strong, Ref or RefMut references exist.
@@ -336,7 +336,7 @@ unsafe impl<T: Send, M: Send + BitMask<Num=usize>> Sync for Strong<T, M> {}
 
 /// A weak reference without access to the inner value.
 ///
-/// To get immutable/mutable access, you need to use the 
+/// To get immutable/mutable access, you need to use the
 /// get_ref/get_refmut functions to create Ref or RefMut references.
 ///
 /// If only weak references exist to the inner value,
@@ -397,7 +397,7 @@ fn arc_drop() {
     drop(z2);
     assert_eq!(q.get(), 73);
 
-    let q2 = Cell::new(12i32); 
+    let q2 = Cell::new(12i32);
     let z2 = <Strong<_>>::new_slice(vec![Dummy(&q2)].into_iter());
     drop(z2);
     assert_eq!(q2.get(), 73);
@@ -431,10 +431,9 @@ fn arc_send() {
     }).join().unwrap();
     assert_eq!(*s.get_ref(), 654i32);
 
-    let s3 = s.get_ref();    
+    let s3 = s.get_ref();
     ::std::thread::spawn(move || {
         assert_eq!(*s3, 654i32);
     }).join().unwrap();
 
 }
-

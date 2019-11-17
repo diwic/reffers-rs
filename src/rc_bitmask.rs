@@ -1,4 +1,4 @@
-use rc::State;
+use crate::rc::State;
 use std::{ops, cmp};
 
 /// The first returned value from BitMask::bits is number of bits for Ref.

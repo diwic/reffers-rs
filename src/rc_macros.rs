@@ -160,7 +160,7 @@ impl<T: ?Sized + Repr, M: $($bm)*> ops::Deref for $r<T, M> {
     fn deref(&self) -> &Self::Target { unsafe { &*self.0.value_ptr() }}
 }
 
-unsafe impl<T: ?Sized + Repr, M: $($bm)*> ::StableDeref for $r<T, M> {}
+unsafe impl<T: ?Sized + Repr, M: $($bm)*> crate::StableDeref for $r<T, M> {}
 
 impl<T: ?Sized + Repr + fmt::Display, M: $($bm)*> fmt::Display for $r<T, M> {
     #[inline]

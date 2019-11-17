@@ -83,9 +83,9 @@ use std::{fmt, mem, ptr, error, ops, borrow, convert, slice, hash, cmp, alloc};
 use std::ptr::NonNull;
 use std::marker::PhantomData;
 
-use rc_bitmask::*;
+use crate::rc_bitmask::*;
 
-pub use rc_bitmask::BitMask;
+pub use crate::rc_bitmask::BitMask;
 
 
 /// Current state of the Rc.
@@ -297,9 +297,9 @@ fn cslice_len_to_layout<T, M: BitMask>(l: usize) -> alloc::Layout {
 pub unsafe trait Repr {
     type Store;
     #[doc(hidden)]
-    fn convert(*mut Self::Store) -> *mut Self;
+    fn convert(_: *mut Self::Store) -> *mut Self;
     #[doc(hidden)]
-    unsafe fn deallocate_mem<M: BitMask>(&mut UnsafeCell<RCell<Self::Store, M>>);
+    unsafe fn deallocate_mem<M: BitMask>(_: &mut UnsafeCell<RCell<Self::Store, M>>);
 }
 
 // Sized types, no problem here
@@ -674,7 +674,7 @@ fn rc_drop() {
 
 #[test]
 fn rc_str() {
-    let s = ::rc2::Ref::new_str("Hello world!");
+    let s = crate::rc2::Ref::new_str("Hello world!");
     assert_eq!(&*s, "Hello world!");
     let _q = s.get_strong();
     let r = s.get_weak();

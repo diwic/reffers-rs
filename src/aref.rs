@@ -22,11 +22,12 @@ pub unsafe trait AReffic: StableDeref {}
 /// RefCell, RwLock and Mutex.
 ///
 /// You probably do not need to worry about this trait, which
-/// due to the lack of GAT (Generic Associated Types) cannot be expressed safely.
+/// cannot be expressed safely in Rust (as of May 2020).
 pub trait Descend {
     type Inner: Deref;
-    // Really, it's &'a self -> Self::Inner<'a>, but we cannot express that in Rust today
+    /// Really, it's &'a self -> Self::Inner<'a>, but we cannot express that in Rust today
     unsafe fn descend(&self) -> Self::Inner;
+    /// Really, it's &'a self -> Self::Inner<'a>, but we cannot express that in Rust today
     unsafe fn try_descend(&self) -> Result<Self::Inner, ()>;
 }
 

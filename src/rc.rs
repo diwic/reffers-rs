@@ -125,25 +125,28 @@ impl<M: BitMask> From<M> for State {
     }
 }
 
+fn state_str(s: State) -> &'static str {
+    match s {
+        State::Available => "Rc/cell is available",
+        State::Borrowed => "Rc/cell is immutably borrowed",
+        State::BorrowedMut => "Rc/cell is mutably borrowed",
+        State::Poisoned => "Rc/cell is poisoned",
+        State::Dropped => "Rc/cell is dropped",
+        State::NotEnoughRefs => "Immutable reference count overflow (no more Refs available)",
+        State::NotEnoughStrongs => "Strong reference count overflow (no more Strongs available)",
+        State::NotEnoughWeaks => "Weak reference count overflow (no more Weaks available)"
+    }
+}
+
+
 impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", error::Error::description(self))
+        write!(f, "{}", state_str(*self))
     }
 }
 
 impl error::Error for State {
-    fn description(&self) -> &str {
-        match *self {
-            State::Available => "Rc/cell is available",
-            State::Borrowed => "Rc/cell is immutably borrowed",
-            State::BorrowedMut => "Rc/cell is mutably borrowed",
-            State::Poisoned => "Rc/cell is poisoned",
-            State::Dropped => "Rc/cell is dropped",
-            State::NotEnoughRefs => "Immutable reference count overflow (no more Refs available)",
-            State::NotEnoughStrongs => "Strong reference count overflow (no more Strongs available)",
-            State::NotEnoughWeaks => "Weak reference count overflow (no more Weaks available)"
-        }
-    }
+    fn description(&self) -> &str { state_str(*self) }
 }
 
 /// This is the "Cell" part of the Rc, which can be used separately

@@ -99,12 +99,13 @@ impl<T: ?Sized + Repr, M: BitMask<Num=usize>> ArcPtr<T, M> {
         let u_new = new_value.get_inner();
         // println!("Storing mask: {:?} {:?}", u_new, new_value.is_alive());
         let u_old = old_value.get_inner();
-        let u_cmp = unsafe { self.0.as_ref().mask.compare_and_swap(u_old, u_new, SeqCst) };
-        if u_old == u_cmp { Ok(()) }
-        else {
-            let mut r: M = Default::default();
-            r.set_inner(u_cmp);
-            Err(r)
+        match unsafe { self.0.as_ref().mask.compare_exchange(u_old, u_new, SeqCst, SeqCst) } {
+            Ok(_) => Ok(()),
+            Err(u_cmp) => {
+                let mut r: M = Default::default();
+                r.set_inner(u_cmp);
+                Err(r)
+            }
         }
     }
 

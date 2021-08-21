@@ -1,6 +1,6 @@
 [package]
 name = "reffers"
-version = "0.6.0"
+version = "0.6.1"
 authors = ["David Henningsson <diwic@ubuntu.com>"]
 license = "Apache-2.0/MIT"
 description = "Smart pointers: ARef, that allows even further owner erasure than OwningRef. Strong is a memory efficient Rc + RefCell in one. And more!"

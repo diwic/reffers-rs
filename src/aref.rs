@@ -183,7 +183,8 @@ pub struct ARef<'a, U: ?Sized> {
     dropfn: unsafe fn (*mut ARefStorage),
     owner: ARefStorage,
     // Just to be 100% to disable Send and Sync
-    _dummy: PhantomData<(Rc<()>, &'a ())>
+    // and bind the lifetime, see https://github.com/diwic/reffers-rs/issues/8
+    _dummy: PhantomData<(Rc<()>, &'a U)>
 }
 
 /// ARefs is a version of ARef that implements Send.

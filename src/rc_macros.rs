@@ -138,7 +138,8 @@ macro_rules! impl_ref_all {
 macro_rules! impl_arc_all {
     ($t: ident, $drop_expr: expr) => {
 
-unsafe impl<T: Send, M: Send + BitMask<Num=usize>> Send for $t<T, M> {}
+unsafe impl<T: Send + Sync, M: Send + Sync + BitMask<Num=usize>> Send for $t<T, M> {}
+unsafe impl<T: Send + Sync, M: Send + Sync + BitMask<Num=usize>> Sync for $t<T, M> {}
 
 impl<T: ?Sized + Repr, M: BitMask<Num=usize>> Drop for $t<T, M> {
     #[inline]

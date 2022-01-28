@@ -78,7 +78,7 @@ impl<'a, T: 'a> RMBA<'a, T> {
     pub fn new_box(t: T) -> RMBA<'a, T> { Box::new(t).into() }
 }
 
-unsafe impl<'a, T: 'a + ?Sized + Send> Send for RMBA<'a, T> {}
+unsafe impl<'a, T: 'a + ?Sized + Send + Sync> Send for RMBA<'a, T> {}
 
 impl<'a, T: 'a + ?Sized> RMBA<'a, T> {
 
